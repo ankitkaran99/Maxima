@@ -1,0 +1,220 @@
+MAXIMA REMAINING LARAVEL PARITY GAPS
+Updated: 2026-05-25
+
+Scope: this file intentionally lists only remaining gaps found by comparing
+the current Maxima source tree with Laravel's documented 12.x feature surface.
+Previously completed roadmap items have been removed.
+
+Reference docs checked:
+- https://laravel.com/docs/12.x/documentation
+- https://laravel.com/docs/12.x/routing
+- https://laravel.com/docs/12.x/blade
+- https://laravel.com/docs/12.x/eloquent
+- https://laravel.com/docs/12.x/validation
+- https://laravel.com/docs/12.x/localization
+- https://laravel.com/docs/12.x/queues
+
+1. VALIDATION AND FORMS
+
+- Expand rule coverage to the rest of Laravel's validator.
+  Missing: accepted/accepted_if, declined/declined_if, ascii, confirmed, current_password,
+  different, doesnt_start_with, doesnt_end_with, enum, hex_color, in/not_in, in_array,
+  ip/ipv4/ipv6, max_digits/min_digits, mimetypes, missing_if/missing_unless/
+  missing_with/missing_with_all, not_regex/regex, required_if_accepted,
+  required_if_declined, required_unless, required_with/with_all/without/without_all,
+  same, size, uuid, url, active_url, extensions, and fluent file builder parity.
+
+- Add full message replacement and attribute translation.
+  Missing: attributes/values translation maps, per-rule placeholder replacements
+  beyond :attribute, nested wildcard messages, custom attribute names, rule-specific
+  replacers, pluralized validation messages, and message bag/view error bag parity.
+
+- Complete FormRequest behavior.
+  Missing: authorize() enforcement, failedAuthorization, failedValidation hooks,
+  messages(), attributes(), validationData(), safe() validated input container,
+  redirect/redirectRoute/errorBag customization, and dependency injection into
+  rules/authorize methods.
+
+2. VIEW ENGINE AND BLADE PARITY
+
+- Add Blade components, slots, and attributes.
+  Missing: service injection via @inject.
+
+- Add remaining Blade directives.
+  Missing: @switch/@case/@default, @forelse/@endforelse native aliasing, $loop
+  variable metadata, @forelse empty semantics without custom @eachelse, @hasSection,
+  @sectionMissing, @production, @prepend, @push/@pushIf/@pushOnce, @stack,
+  @verbatim, Blade comments, @json/@js, @class, @style, @aware,
+  @fragment/@endfragment, @unless support audit, guard arguments for @auth/@guest,
+  environment arrays for @env, and escaped directive output with @@.
+
+- Add view compilation/cache parity.
+  Missing: compiled view cache invalidation by source mtime, view:cache command,
+  view composers/creators, shared data providers, view exists/first helpers,
+  rendering fragments, inline template rendering, and configurable compiled path.
+
+3. LOCALIZATION
+
+- Complete translator parity.
+  Missing: PHP-array style group files equivalent, nested JSON/group precedence
+  parity, locale publishing, pluralizer language selection, stringable handlers,
+  replacement casing behavior, vendor namespace translations, missing key events,
+  runtime locale scoping per request, and robust ICU pluralization rules.
+
+4. AUTHENTICATION, AUTHORIZATION, SECURITY
+
+- Expand authentication guard/provider parity.
+  Missing: multiple guard session isolation parity, custom user providers,
+  Auth::viaRequest-style custom guards, guard events, password confirmation timeout
+  parity, login throttling scaffolding, starter-kit style flows, OAuth/Socialite
+  equivalent, Passport/Sanctum ability middleware parity, and remember-token column
+  compatibility conventions.
+
+- Add hashing and encryption facades.
+  Missing: standalone Hash facade with needsRehash/options, standalone Crypt facade,
+  encrypted strings/objects, key rotation, signed/encrypted cookies parity, and
+  reusable encrypter contract.
+
+- Expand authorization responses.
+  Missing: rich Response objects with allow/deny messages/status, inspect(),
+  allowIf/denyIf, inline authorization bypass behavior parity, resource policy
+  registration helpers, policy auto-discovery edge cases, and Blade guard/argument
+  parity.
+
+5. QUEUES, BUS, AND SCHEDULING
+
+- Complete Bus dispatcher parity.
+  Missing: Bus facade separation, dispatchSync/dispatchAfterResponse, job uniqueness,
+  ShouldBeUnique/UntilProcessing semantics, WithoutOverlapping/RateLimited/
+  ThrottlesExceptions middleware parity, job tags, maxExceptions, retryUntil,
+  backoff methods on jobs, queueable closures, payload hooks, failed() job method,
+  afterCommit dispatch controls, encrypted jobs, and real queue connection
+  abstraction beyond current BeeQueue/database implementations.
+
+- Add missing queue CLI and monitoring features.
+  Missing: queue:listen, queue:restart, queue:clear, queue:forget, queue:prune-failed,
+  queue:monitor, queue:batches-table, queue:failed-table, work --tries/--max-jobs/
+  --max-time/--stop-when-empty/--rest/--name support, Horizon-equivalent dashboard,
+  and failed job provider parity.
+
+- Expand scheduler features.
+  Missing: schedule:list, schedule:work, schedule:clear-cache, timezone, between/
+  unlessBetween, when/skip filters, environments, onOneServer, withoutOverlapping,
+  runInBackground, maintenance mode controls, output/email hooks, ping hooks,
+  mutex cache integration, sub-minute tasks, and schedule groups.
+
+6. CACHE, SESSION, AND RATE LIMITING
+
+- Finish cache store parity.
+  Missing: null/dynamodb/memcached-style drivers, flexible stale-while-revalidate,
+  sear, pull, add, missing, getMultiple/setMultiple parity, memo driver, per-store
+  tag capability handling, database tag support or explicit docs, lock owner restore,
+  isolated locks across all drivers, and cache pruning commands.
+
+- Expand session features.
+  Missing: session blocking, regenerate/destroy/invalidate parity, previous URL,
+  old input bags, session cache, driver commands/tables, concurrent request locking,
+  and middleware ordering compatibility with CSRF/auth flows.
+
+- Expand rate limiting.
+  Missing: multiple named limits with custom response callbacks, Limit::none,
+  per-minute/hour/day variants parity, tooManyAttempts/availableIn public API,
+  clear/reset helpers, Redis-backed atomic limiter parity, and route helper syntax.
+
+7. MAIL AND NOTIFICATIONS
+
+- Complete mailable features.
+  Missing: envelope/content/attachments object API parity, Markdown mailables,
+  mail themes/components, attachFromStorage/attachData/options, tags/metadata,
+  priority, locale, multiple mailers failover/roundrobin, alwaysTo, mail events,
+  preview/render helpers, and mailables generated with full typed stubs.
+
+- Complete notification channel parity.
+  Missing: database notifications and schema helpers, Vonage/SMS parity, Slack Block
+  Kit parity, mail message builder API, notification events, locale preference,
+  on-demand notifications, anonymous notifiables, channel-specific delay/connection/
+  queue middleware, shouldSend, notification tags, and assertion breadth.
+
+8. BROADCASTING AND REALTIME
+
+- Expand broadcasting server/client protocol parity.
+  Missing: install:broadcasting, channel route files parity, Pusher/Reverb protocol
+  compatibility, socket_id exclusion/toOthers, ShouldBroadcastNow, broadcast queue
+  connection/queue configuration, model broadcasting, event authorization endpoint
+  middleware parity, encrypted private channels, client event handling, and
+  broadcaster drivers beyond current in-process WebSocket behavior.
+
+9. FILE STORAGE
+
+- Finish Filesystem adapter parity.
+  Missing: scoped/read-only disks, throw option semantics, temporary upload URLs,
+  response/download helpers integrated with HTTP, path/url normalization parity,
+  recursive allFiles/allDirectories, checksum, missing/exists bulk helpers,
+  Storage::build on-demand disks, cloud default disk, and richer fake assertions.
+
+10. ARTISAN / CLI
+
+- Add missing core Artisan commands.
+  Missing: about, inspire, list/help parity, env, key:generate, optimize,
+  optimize:clear, config:clear, config:show, event:cache/clear/list/generate,
+  storage:link/unlink, lang:publish, vendor:publish, test runner command,
+  make:channel/component/enum/exception/interface/observer/provider/test/trait,
+  install:* commands, db/show/table/monitor/wipe, schema dump, and command
+  signatures with arguments/options validation like Symfony Console.
+
+- Improve stub customization.
+  Missing: generators do not read published stubs yet, no per-command stub override
+  resolution, no package/vendor stub publishing groups, no preserve/force options,
+  and generated stubs are still minimal compared with Laravel's current stubs.
+
+11. LOGGING, EVENTS, OBSERVABILITY
+
+- Expand logging stack.
+  Missing: Monolog-style stacked channels, Slack/Syslog/Errorlog/Papertrail-style
+  drivers, processors/taps, deprecations channel, context sharing/flushing parity,
+  emergency logger fallback, log levels per channel, and structured exception
+  context integration.
+
+- Complete event dispatcher parity.
+  Missing: subscriber classes, event:list/cache/clear/generate commands, ShouldQueue
+  marker conventions, listener middleware, queued listener backoff/retryUntil/
+  maxExceptions, event fakes scoped to tests, event assertions breadth, and event
+  service provider compatibility.
+
+- Add observability/dev tooling packages or equivalents.
+  Missing: Telescope/Pulse-style request/query/job/mail/cache inspection, Horizon
+  dashboard, Scout/search abstraction, Pennant feature flags, Octane-style worker
+  mode, Reverb-grade realtime server, Sail/Valet/Homestead equivalents, Pint-style
+  formatter command, and Boost/MCP/AI SDK parity if those are desired goals.
+
+12. HTTP CLIENT, PROCESSES, COLLECTIONS, SUPPORT HELPERS
+
+- Add HTTP client.
+  Missing: fluent client with baseUrl, headers, auth, retry, timeout, pools,
+  concurrent requests, fakes, sequences, assertions, middleware, macros, and
+  response helpers.
+
+- Add process/concurrency/context abstractions.
+  Missing: process runner with pools/fakes, concurrency driver facade, request/job
+  context storage with scoped values, and test helpers.
+
+- Add collections and string helpers.
+  Missing: Collection/LazyCollection APIs, higher-order proxies, Stringable/Str
+  helpers, Arr/Object helpers, fluent URI helpers, Number helpers, and macroable
+  support utilities.
+
+13. TESTING
+
+- Expand testing DSL.
+  Missing: Laravel-style HTTP test response API breadth, actingAs helpers across
+  guards, withoutMiddleware/withoutExceptionHandling, time travel helpers, event/
+  bus/notification/mail/storage/cache fake parity, console command testing DSL,
+  browser/Dusk equivalent, parallel testing isolation, RefreshDatabase transactions,
+  seed/factory integration, and snapshot/view assertions.
+
+14. PATH AND STORAGE CONSISTENCY
+
+- Keep framework runtime paths inside src when the application root is src.
+  Remaining audit: verify every direct path.join(root, 'storage'...) or relative
+  cache/session/log path across config and drivers; ensure no runtime command writes
+  to project-root /storage when MAXIMA_BASE_PATH points at the repository root.

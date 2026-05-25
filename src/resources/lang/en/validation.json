@@ -1,0 +1,8 @@
+{
+  "required": "The :attribute field is required.",
+  "email": "The :attribute must be a valid email address.",
+  "min": "The :attribute is too short.",
+  "max": "The :attribute is too long.",
+  "email_taken": "That email address is already registered.",
+  "strong_password": "The password must include upper, lower, number, and symbol characters."
+}
