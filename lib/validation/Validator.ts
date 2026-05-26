@@ -7,6 +7,9 @@ import { storagePath } from '@lib/support/paths.js'
 export type ValidationRules = Record<string, FieldSchema | Record<string, FieldSchema>>
 export type ValidatorOptions = {
   messages?: Record<string, string>
+  attributes?: Record<string, string>
+  values?: Record<string, Record<string, string> | string>
+  replacers?: Record<string, (message: string, field: string, rule: Rule, value: unknown, data: Record<string, any>) => string>
   meta?: Record<string, any>
   locale?: string
   fallbackLocale?: string
@@ -38,7 +41,7 @@ export class ValidatorInstance<T extends Record<string, unknown> = Record<string
 
     for (const [field, fieldSchema] of Object.entries(rules)) {
       if (!(fieldSchema instanceof FieldSchema)) continue
-      const value = this.data[field]
+      const value = getNestedValue(this.data, field)
       const missing = value === undefined || value === ''
       if (this.shouldExclude(fieldSchema, this.data)) continue
       if (missing && fieldSchema.isOptional()) {
@@ -52,7 +55,7 @@ export class ValidatorInstance<T extends Record<string, unknown> = Record<string
       }
       if (missing) {
         await this.validateRules(field, value, fieldSchema.getRules().filter(rule => isImplicitRule(rule.name)))
-        if (!this.errorBag[field]?.length) this.addError(field, 'required')
+        if (!this.errorBag[field]?.length) this.addError(field, { name: 'required', validate: () => false }, value)
         continue
       }
 
@@ -118,7 +121,7 @@ export class ValidatorInstance<T extends Record<string, unknown> = Record<string
     for (const rule of rules) {
       const passes = await rule.validate(value, { field, data: this.data, meta: this.options.meta })
       if (!passes) {
-        this.addError(field, rule.name, rule.message)
+        this.addError(field, rule, value)
         if (this.options.stopOnFirstFailure || this.stopOnFirstFailureFlag) throw new ValidationException(this.errorBag)
         if (bail) break
       }
@@ -141,20 +144,74 @@ export class ValidatorInstance<T extends Record<string, unknown> = Record<string
     return false
   }
 
-  private addError(field: string, rule: string, custom?: string | ((field: string) => string)) {
-    const key = `${field}.${rule}`
-    const message = this.formatMessage(field, this.options.messages?.[key]
-      ?? this.options.messages?.[rule]
+  private addError(field: string, rule: Rule, value: unknown) {
+    const key = `${field}.${rule.name}`
+    const message = this.formatMessage(field, rule, value, this.options.messages?.[key]
+      ?? this.findWildcardMessage(field, rule.name, this.options.messages)
+      ?? this.options.messages?.[rule.name]
       ?? this.localeMessages[key]
-      ?? this.localeMessages[rule]
-      ?? (typeof custom === 'function' ? custom(field) : custom)
-      ?? `The ${field} field is invalid.`)
+      ?? this.findWildcardMessage(field, rule.name, this.localeMessages)
+      ?? this.localeMessages[rule.name]
+      ?? (typeof rule.message === 'function' ? rule.message(field) : rule.message)
+      ?? `The :attribute field is invalid.`)
     this.errorBag[field] ??= []
     this.errorBag[field].push(message)
   }
 
-  private formatMessage(field: string, message: string) {
-    return message.replaceAll(':attribute', field)
+  private findWildcardMessage(field: string, rule: string, messages?: Record<string, string>) {
+    if (!messages) return undefined
+    const candidates = [`${field}.${rule}`, field]
+    for (const [key, message] of Object.entries(messages)) {
+      const regex = wildcardRegex(key)
+      if (candidates.some(candidate => regex.test(candidate))) return message
+    }
+    return undefined
+  }
+
+  private formatMessage(field: string, rule: Rule, value: unknown, message: string) {
+    const replacements: Record<string, string> = {
+      ':attribute': this.attributeName(field),
+      ':input': String(value ?? ''),
+      ':value': this.valueName(field, value),
+      ':other': this.attributeName(String(rule.meta?.field ?? rule.meta?.fields?.[0] ?? '')),
+      ':values': Array.isArray(rule.meta?.values) ? rule.meta.values.join(', ') : '',
+      ':min': String(rule.meta?.min ?? ''),
+      ':max': String(rule.meta?.max ?? ''),
+      ':size': String(rule.meta?.size ?? '')
+    }
+    const formatted = Object.entries(replacements)
+      .sort(([first], [second]) => second.length - first.length)
+      .reduce((current, [search, replacement]) => current.replaceAll(search, replacement), message)
+    return this.options.replacers?.[rule.name]?.(formatted, field, rule, value, this.data) ?? formatted
+  }
+
+  private attributeName(field: string) {
+    const localeAttributes = Object.fromEntries(
+      Object.entries(this.localeMessages)
+        .filter(([key]) => key.startsWith('attributes.'))
+        .map(([key, value]) => [key.slice('attributes.'.length), value])
+    )
+    return this.options.attributes?.[field]
+      ?? this.findWildcardValue(field, this.options.attributes)
+      ?? localeAttributes[field]
+      ?? this.findWildcardValue(field, localeAttributes)
+      ?? field
+  }
+
+  private valueName(field: string, value: unknown) {
+    const optionValues = this.options.values?.[field] ?? this.findWildcardValue(field, this.options.values as Record<string, any> | undefined)
+    if (optionValues && typeof optionValues === 'object') return optionValues[String(value)] ?? String(value ?? '')
+    if (typeof optionValues === 'string') return optionValues
+    return this.localeMessages[`values.${field}.${String(value)}`] ?? String(value ?? '')
+  }
+
+  private findWildcardValue(field: string, values?: Record<string, any>) {
+    if (!values) return undefined
+    for (const [key, value] of Object.entries(values)) {
+      const regex = wildcardRegex(key)
+      if (regex.test(field)) return value
+    }
+    return undefined
   }
 
   private async loadLocaleMessages() {
@@ -184,7 +241,23 @@ export class ValidatorInstance<T extends Record<string, unknown> = Record<string
 
 function isImplicitRule(name: string) {
   return name.startsWith('required_')
-    || ['present', 'filled', 'missing', 'prohibited', 'exclude_if', 'exclude_unless'].includes(name)
+    || ['present', 'filled', 'missing', 'missing_if', 'missing_unless', 'missing_with', 'missing_with_all', 'prohibited', 'exclude_if', 'exclude_unless', 'accepted_if', 'declined_if'].includes(name)
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function wildcardRegex(value: string) {
+  return new RegExp(`^${value.split('*').map(escapeRegex).join('[^.]+')}$`)
+}
+
+function getNestedValue(source: Record<string, any>, key: string) {
+  if (Object.prototype.hasOwnProperty.call(source, key)) return source[key]
+  return key.split('.').reduce<any>((current, segment) => {
+    if (current === undefined || current === null || typeof current !== 'object') return undefined
+    return current[segment]
+  }, source)
 }
 
 export const Validator = {

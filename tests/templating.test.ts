@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Application } from '@lib/foundation/Application.js'
-import { renderEmail, setApplication, view } from '@lib/foundation/helpers.js'
+import { app as maximaApp, renderEmail, renderFragment, renderInline, setApplication, view, viewExists, viewFirst } from '@lib/foundation/helpers.js'
 import { ViewFactory } from '@lib/view/ViewFactory.js'
 
 let root: string
@@ -62,7 +62,7 @@ describe('Templating', () => {
     await expect(factory.render('directives', { active: true })).resolves.toContain('checked')
   })
 
-  it('supports Blade-style layout, include, once, and loop aliases', async () => {
+  it('supports layouts with Edge-native include and loop tags', async () => {
     await fs.mkdir(path.join(root, 'resources', 'views', 'layouts'), { recursive: true })
     await fs.mkdir(path.join(root, 'resources', 'views', 'partials'), { recursive: true })
     await fs.writeFile(path.join(root, 'resources', 'views', 'layouts', 'app.edge'), '<main>@yield(\'content\')</main>')
@@ -70,16 +70,16 @@ describe('Templating', () => {
     await fs.writeFile(path.join(root, 'resources', 'views', 'blade.edge'), `
       @extends('layouts/app')
       @section('content')
-        @includeWhen(showBadge, 'partials/badge')
-        @includeUnless(showMissing, 'partials/badge')
+        @includeIf(showBadge, 'partials/badge')
+        @unless(showMissing)
+          @include('partials/badge')
+        @endunless
         @once
           once
         @endonce
-        @eachelse(users as user)
+        @each(user in users)
           {{ user }}
-        @empty
-          empty
-        @endeachelse
+        @endeach
         @for(let i = 0; i < 2; i++)
           {{ i }}
         @endfor
@@ -172,5 +172,73 @@ describe('Templating', () => {
     expect(html).toContain('Bonjour Ada')
     expect(html).toContain('Fallback Ada')
     expect(html).toContain('3 apples')
+  })
+
+  it('supports non-Edge Blade directives without component or alias shims', async () => {
+    await fs.writeFile(path.join(root, 'resources', 'views', 'blade-directives.edge'), `
+      {{-- hidden --}}
+      @switch(status)
+        @case('draft') Draft @break
+        @default Published
+      @endswitch
+      @env(['local', 'testing']) EnvMatched @endenv
+      @verbatim {{ untouched }} @endverbatim
+      @@json
+      <span class="@class({ active: active, hidden: false })" style="@style({ color: 'red', display: false })"></span>
+      @json(payload)
+      @fragment('preview') Preview {{ name }} @endfragment
+    `)
+
+    const factory = new ViewFactory(path.join(root, 'resources'))
+    const html = await factory.render('blade-directives', {
+      status: 'draft',
+      active: true,
+      payload: { tag: '<script>' },
+      name: 'Ada'
+    })
+
+    expect(html).not.toContain('hidden')
+    expect(html).toContain('Draft')
+    expect(html).toContain('EnvMatched')
+    expect(html).toContain('{{ untouched }}')
+    expect(html).toContain('@json')
+    expect(html).toContain('class="active"')
+    expect(html).toContain('style="color: red"')
+    expect(html).toContain('\\u003Cscript\\u003E')
+    expect(html).toContain('Preview Ada')
+    await expect(factory.renderFragment('blade-directives', 'preview', { name: 'Grace' })).resolves.toContain('Preview Grace')
+  })
+
+  it('supports composers, creators, view lookup helpers, and inline rendering', async () => {
+    await fs.writeFile(path.join(root, 'resources', 'views', 'composed.edge'), '{{ created }} {{ composed }} {{ shared }}')
+    await fs.writeFile(path.join(root, 'resources', 'views', 'fragmented.edge'), '@fragment(\'preview\')Preview {{ name }}@endfragment')
+    const factory = new ViewFactory(path.join(root, 'resources'))
+    factory.share('shared', 'shared-data')
+    factory.creator('composed', data => { data.created = 'created-data' })
+    factory.composer('composed', data => { data.composed = 'composed-data' })
+
+    const html = await factory.render('composed')
+    expect(html).toContain('created-data composed-data shared-data')
+    await expect(factory.first(['missing', 'composed'])).resolves.toContain('created-data')
+    await expect(factory.renderInline('Hello {{ name }}', { name: 'Inline' })).resolves.toContain('Hello Inline')
+
+    ;(maximaApp() as Application).instance(ViewFactory, factory)
+    await expect(viewExists('composed')).resolves.toBe(true)
+    await expect(viewFirst(['missing', 'composed'])).resolves.toContain('composed-data')
+    await expect(renderInline('Helper {{ name }}', { name: 'Inline' })).resolves.toContain('Helper Inline')
+    await expect(renderFragment('fragmented', 'preview', { name: 'Helper' })).resolves.toContain('Preview Helper')
+  })
+
+  it('invalidates compiled view cache when the source mtime changes', async () => {
+    const cacheDir = path.join(root, 'storage', 'framework', 'views')
+    await fs.writeFile(path.join(root, 'resources', 'views', 'cached.edge'), 'First')
+    const factory = new ViewFactory(path.join(root, 'resources'), cacheDir)
+
+    await expect(factory.render('cached')).resolves.toContain('First')
+    expect((await fs.readdir(cacheDir)).length).toBeGreaterThan(0)
+    await new Promise(resolve => setTimeout(resolve, 10))
+    await fs.writeFile(path.join(root, 'resources', 'views', 'cached.edge'), 'Second')
+
+    await expect(factory.render('cached')).resolves.toContain('Second')
   })
 })

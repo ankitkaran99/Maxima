@@ -7,4 +7,6 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 const app = new Application(root)
 setApplication(app)
 await app.bootstrap()
-await new HttpKernel(app).listen()
+const { port, host } = await new HttpKernel(app).listen()
+
+console.log(`Server running at http://${host}:${port}`)

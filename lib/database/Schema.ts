@@ -73,11 +73,28 @@ export class SchemaBuilder {
     await this.create(failed, builder => {
       builder.increments('id')
       builder.string('uuid').nullable().unique()
-      builder.text('connection').notNullable()
+      builder.text('connection').nullable()
       builder.text('queue').notNullable()
+      builder.string('job').nullable()
       builder.text('payload').notNullable()
-      builder.text('exception').notNullable()
+      builder.text('exception').nullable()
+      builder.text('error').nullable()
       builder.timestamp('failed_at').defaultTo(DB.connection(this.connectionName).fn.now())
+    })
+  }
+
+  async createBatchTable(table = 'job_batches'): Promise<void> {
+    await this.create(table, builder => {
+      builder.string('id').primary()
+      builder.string('name')
+      builder.integer('total_jobs')
+      builder.integer('pending_jobs')
+      builder.integer('failed_jobs')
+      builder.text('failed_job_ids')
+      builder.text('options')
+      builder.integer('cancelled_at').nullable()
+      builder.integer('created_at')
+      builder.integer('finished_at').nullable()
     })
   }
 

@@ -6,9 +6,7 @@ import type { ControllerAction } from '@lib/http/Route.js'
 import crypto from 'node:crypto'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import fs from 'node:fs/promises'
-import fsSync from 'node:fs'
-import path from 'node:path'
+import { TranslatorInstance, type TranslationOptions } from '@lib/translation/Translator.js'
 
 let currentApp: Application | undefined
 const requestStorage = new AsyncLocalStorage<{ request: any, response: any }>()
@@ -143,6 +141,26 @@ export async function renderEmail(template: string, data: Record<string, unknown
   return (await app<any>(ViewFactory)).renderEmail(template, data)
 }
 
+export async function viewFirst(templates: string[], data: Record<string, unknown> = {}) {
+  const { ViewFactory } = await import('@lib/view/ViewFactory.js')
+  return (await app<any>(ViewFactory)).first(templates, data)
+}
+
+export async function viewExists(template: string) {
+  const { ViewFactory } = await import('@lib/view/ViewFactory.js')
+  return (await app<any>(ViewFactory)).exists(template)
+}
+
+export async function renderInline(template: string, data: Record<string, unknown> = {}) {
+  const { ViewFactory } = await import('@lib/view/ViewFactory.js')
+  return (await app<any>(ViewFactory)).renderInline(template, data)
+}
+
+export async function renderFragment(template: string, fragment: string, data: Record<string, unknown> = {}) {
+  const { ViewFactory } = await import('@lib/view/ViewFactory.js')
+  return (await app<any>(ViewFactory)).renderFragment(template, fragment, data)
+}
+
 export function logger() {
   return import('@lib/logging/LogManager.js').then(({ Log }) => Log.channel())
 }
@@ -221,28 +239,27 @@ export function hasValidRelativeSignature(url: string, ignore: string[] = []) {
   return hasValidSignature(url, { absolute: false, ignore })
 }
 
-type TranslationOptions = Record<string, unknown> & {
-  locale?: string
-  fallbackLocale?: string
-  count?: number
-}
-
-const translationCache = new Map<string, Record<string, unknown>>()
-
 export async function trans(key: string, options: TranslationOptions = {}) {
-  const value = await resolveTranslation(key, options)
-  if (value === undefined) return key
-  return interpolate(String(value), options)
+  return TranslatorInstance.get(key, withConfiguredLocales(options))
 }
 
 export async function transChoice(key: string, count: number, options: TranslationOptions = {}) {
-  const values = { ...options, count }
-  const value = await resolveTranslation(key, values)
-  if (value === undefined) return key
-  return interpolate(choosePlural(String(value), count), values)
+  return TranslatorInstance.choice(key, count, withConfiguredLocales(options))
 }
 
 export const __ = trans
+
+export function setLocale(locale: string) { return TranslatorInstance.setLocale(locale) }
+export function getLocale() { return TranslatorInstance.getLocale() }
+export function setFallbackLocale(locale: string) { return TranslatorInstance.setFallbackLocale(locale) }
+export function getFallbackLocale() { return TranslatorInstance.getFallbackLocale() }
+export function withLocale<T>(locale: string, callback: () => T) { return TranslatorInstance.withLocale(locale, callback) }
+export function stringable(match: Function | ((value: unknown) => boolean), formatter?: (value: any) => string) {
+  return TranslatorInstance.stringable(match, formatter)
+}
+export function usePluralizer(language: string) { return TranslatorInstance.usePluralizer(language) }
+export function pluralize(word: string, count = 2) { return TranslatorInstance.pluralize(word, count) }
+
 export { basePath, appPath, configPath, databasePath, publicPath, resourcePath, storagePath }
 
 export function base_path(...segments: string[]) { return basePath(...segments) }
@@ -277,6 +294,10 @@ export function registerGlobalHelpers() {
     previousUrl,
     view,
     renderEmail,
+    viewFirst,
+    viewExists,
+    renderInline,
+    renderFragment,
     logger,
     auth,
     cache,
@@ -296,6 +317,14 @@ export function registerGlobalHelpers() {
     trans,
     transChoice,
     __,
+    setLocale,
+    getLocale,
+    setFallbackLocale,
+    getFallbackLocale,
+    withLocale,
+    stringable,
+    usePluralizer,
+    pluralize,
     base_path,
     app_path,
     config_path,
@@ -321,95 +350,6 @@ export function runWithRequestContext<T>(request: any, response: any, callback: 
   return requestStorage.run({ request, response }, callback)
 }
 
-async function resolveTranslation(key: string, options: TranslationOptions) {
-  const locale = String(options.locale ?? safeConfig('app.locale', process.env.APP_LOCALE ?? 'en'))
-  const fallbackLocale = String(options.fallbackLocale ?? safeConfig('app.fallback_locale', 'en'))
-  const locales = [...new Set([locale, fallbackLocale].filter(Boolean))]
-
-  for (const candidate of locales) {
-    const value = await lookupTranslation(candidate, key)
-    if (value !== undefined) return value
-  }
-
-  return undefined
-}
-
-async function lookupTranslation(locale: string, key: string) {
-  const [namespace, ...segments] = key.split('.')
-  if (!namespace) return undefined
-  const messages = await loadTranslationFile(locale, namespace)
-  if (!messages) return undefined
-  if (!segments.length) return messages[key]
-  return getNestedValue(messages, segments) ?? messages[key]
-}
-
-async function loadTranslationFile(locale: string, namespace: string) {
-  for (const file of translationFileCandidates(locale, namespace)) {
-    try {
-      if (!translationCache.has(file)) translationCache.set(file, JSON.parse(await fs.readFile(file, 'utf8')))
-      return translationCache.get(file)
-    } catch {}
-  }
-  return undefined
-}
-
-function translationFileCandidates(locale: string, namespace: string) {
-  const roots = new Set<string>()
-  if (currentApp) {
-    roots.add(path.join(currentApp.rootPath, 'resources', 'lang'))
-    roots.add(path.join(currentApp.rootPath, 'src', 'resources', 'lang'))
-  }
-  roots.add(resourcePath('lang'))
-  roots.add(path.resolve(process.cwd(), 'src', 'resources', 'lang'))
-  roots.add(path.resolve(process.cwd(), 'resources', 'lang'))
-  return [...roots].map(root => path.join(root, locale, `${namespace}.json`)).filter(file => fsSync.existsSync(file))
-}
-
-function getNestedValue(source: Record<string, unknown>, segments: string[]) {
-  let current: unknown = source
-  for (const segment of segments) {
-    if (!current || typeof current !== 'object' || !(segment in current)) return undefined
-    current = (current as Record<string, unknown>)[segment]
-  }
-  return typeof current === 'string' || typeof current === 'number' ? current : undefined
-}
-
-function interpolate(message: string, options: Record<string, unknown>) {
-  return Object.entries(options).reduce((output, [key, value]) => {
-    return output
-      .replaceAll(`:${key}`, String(value))
-      .replaceAll(`{{ ${key} }}`, String(value))
-      .replaceAll(`{{${key}}}`, String(value))
-  }, message)
-}
-
-function choosePlural(message: string, count: number) {
-  const segments = message.split('|').map(segment => segment.trim())
-  if (segments.length === 1) return message
-
-  for (const segment of segments) {
-    const exact = segment.match(/^\{(-?\d+)\}\s*(.*)$/)
-    if (exact && Number(exact[1]) === count) return exact[2]
-
-    const range = segment.match(/^\[(-?\d+|\*),\s*(-?\d+|\*)]\s*(.*)$/)
-    if (range) {
-      const min = range[1] === '*' ? -Infinity : Number(range[1])
-      const max = range[2] === '*' ? Infinity : Number(range[2])
-      if (count >= min && count <= max) return range[3]
-    }
-  }
-
-  return count === 1 ? segments[0] : segments[segments.length - 1]
-}
-
-function safeConfig<T>(key: string, defaultValue: T) {
-  try {
-    return currentApp ? currentApp.config.get<T>(key, defaultValue) : defaultValue
-  } catch {
-    return defaultValue
-  }
-}
-
 function normalizeRouteParams(params: RouteParams, parameterNames: string[]) {
   if (params === undefined || params === null) return {}
   if (typeof params !== 'object' || params instanceof Date) {
@@ -420,6 +360,22 @@ function normalizeRouteParams(params: RouteParams, parameterNames: string[]) {
     return Object.fromEntries(params.map((value, index) => [parameterNames[index] ?? String(index), value]))
   }
   return Object.fromEntries(Object.entries(params).filter(([key]) => key !== '_query'))
+}
+
+function withConfiguredLocales(options: TranslationOptions) {
+  return {
+    ...options,
+    locale: options.locale ?? (TranslatorInstance.hasScopedLocale() ? undefined : safeConfig('app.locale', process.env.APP_LOCALE ?? TranslatorInstance.getLocale())),
+    fallbackLocale: options.fallbackLocale ?? safeConfig('app.fallback_locale', process.env.APP_FALLBACK_LOCALE ?? TranslatorInstance.getFallbackLocale())
+  }
+}
+
+function safeConfig<T>(key: string, defaultValue: T) {
+  try {
+    return currentApp ? currentApp.config.get<T>(key, defaultValue) : defaultValue
+  } catch {
+    return defaultValue
+  }
 }
 
 function escapeRouteParameter(value: string) {

@@ -216,6 +216,98 @@ describe('Validator', () => {
     })).rejects.toMatchObject({ errors: { image: expect.any(Array) } })
   })
 
+  it('supports Laravel parity validation rules', async () => {
+    enum Status { Draft = 'draft', Published = 'published' }
+    const upload = { mimeType: 'application/pdf', size: 512, filename: 'report.pdf' }
+
+    await expect(Validator.validate({
+      accepted: 'yes',
+      declined: 'no',
+      ascii: 'Maxima',
+      password: 'secret',
+      password_confirmation: 'secret',
+      color: '#ffaa00',
+      status: 'draft',
+      selected: 'admin',
+      roles: ['admin', 'editor'],
+      ip: '127.0.0.1',
+      ip4: '127.0.0.1',
+      ip6: '::1',
+      pin: '123456',
+      code: 'ABC-123',
+      url: 'https://example.com',
+      uuid: '550e8400-e29b-41d4-a716-446655440000',
+      upload,
+      allow_terms: 'on',
+      deny_terms: 'off',
+      note_source: 'present',
+      other: 'same',
+      compare: 'same',
+      avoid: 'different'
+    }, {
+      accepted: schema.string().accepted(),
+      declined: schema.string().declined(),
+      ascii: schema.string().ascii().doesntStartWith('tmp').doesntEndWith('bak'),
+      password: schema.string().confirmed(),
+      color: schema.string().hexColor(),
+      status: schema.string().enum(Status).in(['draft', 'published']).notIn(['archived']),
+      selected: schema.string().inArray('roles'),
+      ip: schema.string().ip(),
+      ip4: schema.string().ipv4(),
+      ip6: schema.string().ipv6(),
+      pin: schema.string().minDigits(4).maxDigits(6),
+      code: schema.string().regex(/^[A-Z]+-\d+$/).notRegex(/BAD/),
+      url: schema.string().url(),
+      uuid: schema.string().uuid(),
+      upload: schema.file().file().mimeTypes(['application/pdf']).extensions(['pdf']).minFileSize(100).maxFileSize(1024),
+      allow_terms: schema.string().acceptedIf('note_source', 'present'),
+      deny_terms: schema.string().declinedIf('note_source', 'present'),
+      required_because_accepted: schema.string().requiredIfAccepted('allow_terms'),
+      required_because_declined: schema.string().requiredIfDeclined('deny_terms'),
+      required_unless: schema.string().requiredUnless('note_source', 'absent'),
+      required_with_all: schema.string().requiredWithAll('accepted', 'declined'),
+      other: schema.string().same('compare'),
+      avoid: schema.string().different('compare'),
+      missing_if: schema.string().missingIf('note_source', 'present'),
+      missing_unless: schema.string().missingUnless('note_source', 'absent'),
+      missing_with: schema.string().missingWith('note_source'),
+      missing_with_all: schema.string().missingWithAll('accepted', 'declined')
+    })).rejects.toMatchObject({
+      errors: {
+        required_because_accepted: expect.any(Array),
+        required_because_declined: expect.any(Array),
+        required_unless: expect.any(Array)
+      }
+    })
+  })
+
+  it('replaces validation message placeholders and returns safe validated input', async () => {
+    await expect(Validator.validate({ users: [{ email: 'bad' }], role: 'root' }, {
+      'users.0.email': schema.string().email(),
+      role: schema.string().in(['admin'])
+    }, {
+      messages: {
+        'users.*.email.email': 'The :attribute must be valid.',
+        in: 'The :attribute value :value must be one of :values.'
+      },
+      attributes: {
+        'users.*.email': 'user email',
+        role: 'role'
+      },
+      values: {
+        role: { root: 'superuser' }
+      },
+      replacers: {
+        in: message => message.replace(':values', 'admin')
+      }
+    })).rejects.toMatchObject({
+      errors: {
+        'users.0.email': ['The user email must be valid.'],
+        role: ['The role value superuser must be one of admin.']
+      }
+    })
+  })
+
   it('runs FormRequest preparation, validation, and after hooks', async () => {
     class StoreUserRequest extends FormRequest {
       afterRan = false
@@ -237,6 +329,36 @@ describe('Validator', () => {
     await request.validateResolved()
 
     expect(request.validated()).toEqual({ email: 'user@example.com' })
+    expect(request.safe().only(['email'])).toEqual({ email: 'user@example.com' })
     expect(request.afterRan).toBe(true)
+  })
+
+  it('supports FormRequest hooks, attributes, validationData, and error bag customization', async () => {
+    class UpdateUserRequest extends FormRequest {
+      errorBag = 'profile'
+
+      rules() {
+        return { email: schema.string().email() }
+      }
+
+      messages() {
+        return { email: 'The :attribute is not acceptable.' }
+      }
+
+      attributes() {
+        return { email: 'contact email' }
+      }
+
+      validationData() {
+        return { email: this.input('contact') }
+      }
+    }
+
+    const request = new UpdateUserRequest({ body: { contact: 'bad' } } as any, {} as any)
+    await expect(request.validateResolved()).rejects.toMatchObject({
+      errorBag: 'profile',
+      errors: { email: ['The contact email is not acceptable.'] }
+    })
+    expect(request.errors('profile')).toEqual({ email: ['The contact email is not acceptable.'] })
   })
 })

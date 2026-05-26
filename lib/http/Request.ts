@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { config } from '@lib/foundation/helpers.js'
 import { Validator, type ValidationRules } from '@lib/validation/Validator.js'
+import { ValidatedInput } from '@lib/validation/ValidatedInput.js'
 
 export class Request {
   [key: string]: any
@@ -155,7 +156,7 @@ export class Request {
   }
 
   safe<T = Record<string, unknown>>() {
-    return this.validated<T>()
+    return new ValidatedInput(this.validated() as Record<string, unknown>) as ValidatedInput<T & Record<string, unknown>>
   }
 
   setErrors(errors: Record<string, string[]>, bag = 'default') {

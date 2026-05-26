@@ -93,6 +93,12 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
     .option('--sleep <seconds>', 'Number of seconds to sleep when no jobs are available', '3')
     .option('--timeout <seconds>', 'The number of seconds a job can run', '60')
     .option('--backoff <backoff>', 'Backoff delay for failed jobs', '')
+    .option('--tries <tries>', 'Number of attempts before failing the job')
+    .option('--max-jobs <jobs>', 'Stop after processing this many jobs')
+    .option('--max-time <seconds>', 'Stop after running for this many seconds')
+    .option('--stop-when-empty', 'Stop when no jobs are available', false)
+    .option('--rest <seconds>', 'Seconds to rest after each processed job')
+    .option('--name <name>', 'Worker name')
     .action(async (options) => {
       await bootstrap()
       const workerOptions = {
@@ -102,14 +108,23 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
         memory: options.memory ? Number(options.memory) : undefined,
         sleep: options.sleep ? Number(options.sleep) : undefined,
         timeout: options.timeout ? Number(options.timeout) : undefined,
-        backoff: options.backoff || undefined
+        backoff: options.backoff || undefined,
+        tries: options.tries ? Number(options.tries) : undefined,
+        maxJobs: options.maxJobs ? Number(options.maxJobs) : undefined,
+        maxTime: options.maxTime ? Number(options.maxTime) : undefined,
+        stopWhenEmpty: !!options.stopWhenEmpty,
+        rest: options.rest ? Number(options.rest) : undefined,
+        name: options.name
       }
       await Queue.work(options.queue, workerOptions)
       console.log('INFO  Queue worker started')
     })
 
   program.command('schedule:run').action(async () => { await bootstrap(); await Schedule.runDue(); console.log('INFO  Scheduled tasks executed') })
-  program.command('config:cache').action(async () => { const app = await bootstrap(); await app.config.cache(basePath('bootstrap/cache/config.json')); console.log('INFO  Configuration cached') })
+  program.command('schedule:list').action(async () => { await bootstrap(); console.table(Schedule.all()) })
+  program.command('schedule:work').option('--interval <milliseconds>', 'Loop interval in milliseconds', '1000').action(async options => { await bootstrap(); await Schedule.work(Number(options.interval ?? 1000)) })
+  program.command('schedule:clear-cache').action(async () => { await bootstrap(); await Schedule.clearCache(); console.log('INFO  Schedule cache cleared') })
+  program.command('config:cache').action(async () => { const app = await bootstrap(); await app.config.cache(storagePath('framework/config.json')); console.log('INFO  Configuration cached') })
   
   program.command('route:cache').action(async () => {
     const app = await bootstrap()
@@ -179,7 +194,7 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
       }
     }
 
-    const cacheDir = path.join(app.rootPath, 'bootstrap', 'cache')
+    const cacheDir = storagePath('framework')
     await fs.mkdir(cacheDir, { recursive: true })
     const cachePath = path.join(cacheDir, 'routes.json')
     await fs.writeFile(cachePath, JSON.stringify({ routes: routesToCache, fallback: fallbackToCache }, null, 2))
@@ -188,7 +203,7 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
 
   program.command('route:clear').action(async () => {
     const app = await bootstrap()
-    const cachePath = path.join(app.rootPath, 'bootstrap', 'cache', 'routes.json')
+    const cachePath = storagePath('framework/routes.json')
     if (fsSync.existsSync(cachePath)) {
       await fs.unlink(cachePath)
     }
@@ -212,6 +227,36 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
       }
     }
     console.log('INFO  Compiled views cleared')
+  })
+
+  program.command('view:cache').action(async () => {
+    await bootstrap()
+    const { ViewFactory } = await import('@lib/view/ViewFactory.js')
+    const factory = new ViewFactory(path.join(projectRoot(), 'resources'))
+    const compiled = await factory.cacheViews()
+    console.log(`INFO  Compiled ${compiled.length} views cached`)
+  })
+
+  program.command('lang:publish').action(async () => {
+    await bootstrap()
+    const langDir = path.join(projectRoot(), 'resources', 'lang', 'en')
+    await fs.mkdir(langDir, { recursive: true })
+    const validationFile = path.join(langDir, 'validation.json')
+    const messagesFile = path.join(langDir, 'messages.json')
+    if (!fsSync.existsSync(validationFile)) {
+      await fs.writeFile(validationFile, JSON.stringify({
+        required: 'The :attribute field is required.',
+        string: 'The :attribute must be a string.',
+        min: 'The :attribute must be at least :min characters.'
+      }, null, 2))
+    }
+    if (!fsSync.existsSync(messagesFile)) {
+      await fs.writeFile(messagesFile, JSON.stringify({
+        welcome: 'Welcome, :Name',
+        apples: '{0} No apples|{1} One apple|[2,*] :count apples'
+      }, null, 2))
+    }
+    console.log('INFO  Language files published')
   })
 
   program.command('down').action(async () => {
@@ -276,6 +321,39 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
     console.table(failed)
   })
 
+  program.command('queue:listen')
+    .option('--queue <queue>', 'The queue connection to listen on', 'default')
+    .option('--sleep <seconds>', 'Number of seconds to sleep when no jobs are available', '3')
+    .option('--tries <tries>', 'Number of attempts before failing the job')
+    .action(async options => {
+      await bootstrap()
+      await Queue.work(options.queue, {
+        queue: options.queue,
+        sleep: Number(options.sleep ?? 3),
+        tries: options.tries ? Number(options.tries) : undefined
+      })
+    })
+
+  program.command('queue:restart').action(async () => {
+    await bootstrap()
+    const file = storagePath('framework/queue-restart')
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, String(Date.now()))
+    console.log('INFO  Queue restart signal sent')
+  })
+
+  program.command('queue:clear')
+    .option('--queue <queue>', 'Queue name', 'default')
+    .action(async options => {
+      await bootstrap()
+      const { config } = await import('@lib/foundation/helpers.js')
+      const connection = config<string>('queue.default', 'default')
+      const conn = config<any>(`queue.connections.${connection}`, { driver: 'database', table: 'jobs' })
+      const table = conn.table ?? 'jobs'
+      const deleted = await DB.table(table).where('queue', options.queue).delete().catch(() => 0)
+      console.log(`INFO  Deleted ${deleted} jobs from [${options.queue}]`)
+    })
+
   program.command('queue:retry <id>').action(async id => {
     await bootstrap()
     const { config } = await import('@lib/foundation/helpers.js')
@@ -303,6 +381,74 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
         console.error(`ERROR Failed to retry job [${failed.id}]:`, err)
       }
     }
+  })
+
+  program.command('queue:forget <id>').action(async id => {
+    await bootstrap()
+    const { config } = await import('@lib/foundation/helpers.js')
+    const table = config<string>('queue.failed.table', 'failed_jobs')
+    await DB.table(table).where('id', id).delete()
+    console.log(`INFO  Forgotten failed job [${id}]`)
+  })
+
+  program.command('queue:prune-failed')
+    .option('--hours <hours>', 'Prune failed jobs older than this many hours', '24')
+    .action(async options => {
+      await bootstrap()
+      const { config } = await import('@lib/foundation/helpers.js')
+      const table = config<string>('queue.failed.table', 'failed_jobs')
+      const cutoff = new Date(Date.now() - Number(options.hours ?? 24) * 60 * 60 * 1000)
+      const deleted = await DB.table(table).where('failed_at', '<', cutoff).delete().catch(() => 0)
+      console.log(`INFO  Pruned ${deleted} failed jobs`)
+    })
+
+  program.command('queue:monitor')
+    .option('--queue <queue>', 'Queue name', 'default')
+    .action(async options => {
+      await bootstrap()
+      const { config } = await import('@lib/foundation/helpers.js')
+      const connection = config<string>('queue.default', 'default')
+      const conn = config<any>(`queue.connections.${connection}`, { driver: 'database', table: 'jobs' })
+      const table = conn.table ?? 'jobs'
+      const size = await DB.table(table).where('queue', options.queue).count({ count: '*' }).first().then(row => Number(row?.count ?? 0)).catch(() => 0)
+      console.table([{ queue: options.queue, size }])
+    })
+
+  program.command('queue:failed-table').action(async () => {
+    await bootstrap()
+    const { Schema } = await import('@lib/database/Schema.js')
+    const { config } = await import('@lib/foundation/helpers.js')
+    const table = config<string>('queue.failed.table', 'failed_jobs')
+    await Schema.create(table, builder => {
+      builder.increments('id')
+      builder.string('uuid').nullable().unique()
+      builder.text('connection').nullable()
+      builder.text('queue').notNullable()
+      builder.string('job').nullable()
+      builder.text('payload').notNullable()
+      builder.text('exception').nullable()
+      builder.text('error').nullable()
+      builder.timestamp('failed_at').defaultTo(DB.connection().fn.now())
+    })
+    console.log('INFO  Failed jobs table created')
+  })
+
+  program.command('queue:batches-table').action(async () => {
+    await bootstrap()
+    const { Schema } = await import('@lib/database/Schema.js')
+    await Schema.create('job_batches', builder => {
+      builder.string('id').primary()
+      builder.string('name')
+      builder.integer('total_jobs')
+      builder.integer('pending_jobs')
+      builder.integer('failed_jobs')
+      builder.text('failed_job_ids')
+      builder.text('options')
+      builder.integer('cancelled_at').nullable()
+      builder.integer('created_at')
+      builder.integer('finished_at').nullable()
+    })
+    console.log('INFO  Job batches table created')
   })
 
   program.command('queue:flush').action(async () => {

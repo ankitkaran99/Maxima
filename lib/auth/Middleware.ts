@@ -5,17 +5,17 @@ import { Auth } from '@lib/auth/AuthManager.js'
 import { Gate } from '@lib/auth/Gate.js'
 
 export class AuthMiddleware {
-  async handle(request: Request, reply: FastifyReply, next: Next) {
+  async handle(request: Request, reply: FastifyReply, next: Next, guard = 'session') {
     Auth.setRequest(request.raw, reply)
-    if (!(await Auth.check())) return reply.code(401).send({ message: 'Unauthenticated.' })
+    if (!(await Auth.check(guard))) return reply.code(401).send({ message: 'Unauthenticated.' })
     return next()
   }
 }
 
 export class GuestMiddleware {
-  async handle(request: Request, reply: FastifyReply, next: Next) {
+  async handle(request: Request, reply: FastifyReply, next: Next, guard = 'session') {
     Auth.setRequest(request.raw, reply)
-    if (await Auth.check()) return reply.redirect('/')
+    if (await Auth.check(guard)) return reply.redirect('/')
     return next()
   }
 }
@@ -68,5 +68,27 @@ export class PasswordConfirmedMiddleware {
     Auth.setRequest(request.raw, reply)
     if (!Auth.passwordConfirmed()) return reply.code(423).send({ message: 'Password confirmation required.' })
     return next()
+  }
+}
+
+export class AbilitiesMiddleware {
+  async handle(request: Request, reply: FastifyReply, next: Next, parameter = '') {
+    Auth.setRequest(request.raw, reply)
+    const user = await Auth.user('token')
+    if (!user) return reply.code(401).send({ message: 'Unauthenticated.' })
+    const abilities = parameter.split(',').map(ability => ability.trim()).filter(Boolean)
+    if (abilities.every(ability => user.tokenCan?.(ability))) return next()
+    return reply.code(403).send({ message: 'Missing required token ability.' })
+  }
+}
+
+export class AbilityMiddleware {
+  async handle(request: Request, reply: FastifyReply, next: Next, parameter = '') {
+    Auth.setRequest(request.raw, reply)
+    const user = await Auth.user('token')
+    if (!user) return reply.code(401).send({ message: 'Unauthenticated.' })
+    const abilities = parameter.split(',').map(ability => ability.trim()).filter(Boolean)
+    if (abilities.some(ability => user.tokenCan?.(ability))) return next()
+    return reply.code(403).send({ message: 'Missing required token ability.' })
   }
 }

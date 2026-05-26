@@ -1,12 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { toFileUrl } from '@lib/support/paths.js'
+import { storagePath, toFileUrl } from '@lib/support/paths.js'
 
 export class ConfigRepository {
   private items: Record<string, any> = {}
 
   async load(directory: string) {
-    const cached = path.join(directory, '..', 'bootstrap', 'cache', 'config.json')
+    const cached = storagePath('framework/config.json')
     try {
       this.items = JSON.parse(await fs.readFile(cached, 'utf8'))
       return

@@ -98,6 +98,18 @@ describe('CLI Extras', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Compiled views cleared'))
   })
 
+  it('view:cache compiles view files into src storage', async () => {
+    const viewsDir = path.join(root, 'src', 'resources', 'views')
+    await fs.mkdir(viewsDir, { recursive: true })
+    await fs.writeFile(path.join(viewsDir, 'home.edge'), '<h1>{{ title }}</h1>')
+
+    await runCliCommand(['view:cache'])
+
+    const cacheDir = path.join(root, 'src', 'storage', 'framework', 'views')
+    expect((await fs.readdir(cacheDir)).length).toBeGreaterThan(0)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('views cached'))
+  })
+
   it('down and up toggle maintenance mode in src storage', async () => {
     await runCliCommand(['down'])
     const downFile = path.join(root, 'src', 'storage', 'framework', 'down')

@@ -1,15 +1,34 @@
 import { config } from '@lib/foundation/helpers.js'
 
-type GateCallback = (user: any, ...args: any[]) => boolean | Promise<boolean>
-type AuthorizationDecision = boolean | { allowed: boolean, message?: string } | string | null | undefined
-type AuthorizationResult = { allowed: boolean, message?: string }
+type GateCallback = (user: any, ...args: any[]) => AuthorizationDecision | Promise<AuthorizationDecision>
+type AuthorizationDecision = boolean | AuthorizationResponse | { allowed: boolean, message?: string, status?: number } | string | null | undefined
 type PolicyConstructor = new () => Record<string, any>
 
 export class AuthorizationException extends Error {
-  statusCode = 403
-  constructor(message = 'This action is unauthorized.') {
+  constructor(message = 'This action is unauthorized.', public statusCode = 403) {
     super(message)
     this.name = 'AuthorizationException'
+  }
+}
+
+export class AuthorizationResponse {
+  constructor(
+    public allowed: boolean,
+    public message = allowed ? 'This action is authorized.' : 'This action is unauthorized.',
+    public status = allowed ? 200 : 403
+  ) {}
+
+  static allow(message = 'This action is authorized.') {
+    return new AuthorizationResponse(true, message, 200)
+  }
+
+  static deny(message = 'This action is unauthorized.', status = 403) {
+    return new AuthorizationResponse(false, message, status)
+  }
+
+  authorize() {
+    if (!this.allowed) throw new AuthorizationException(this.message, this.status)
+    return true
   }
 }
 
@@ -45,23 +64,39 @@ export class GateManager {
 
   async authorize(ability: string, subject?: any, user = currentUser(), message?: string) {
     const decision = await this.inspect(ability, subject, user)
-    if (!decision.allowed) throw new AuthorizationException(message ?? decision.message)
+    if (!decision.allowed) throw new AuthorizationException(message ?? decision.message, decision.status)
     return true
+  }
+
+  allowIf(condition: boolean | ((user: any) => boolean | Promise<boolean>), message?: string) {
+    return this.inline(condition, true, message)
+  }
+
+  denyIf(condition: boolean | ((user: any) => boolean | Promise<boolean>), message?: string) {
+    return this.inline(condition, false, message)
+  }
+
+  policy(model: string | Function, policy: PolicyConstructor) {
+    this.policyCache.set(typeof model === 'string' ? this.normalizePolicyName(model) : this.normalizePolicyName(model.name), policy)
+    return this
   }
 
   forUser(user: any) {
     return {
       allows: (ability: string, subject?: any) => this.allows(ability, subject, user),
       denies: (ability: string, subject?: any) => this.denies(ability, subject, user),
-      authorize: (ability: string, subject?: any, message?: string) => this.authorize(ability, subject, user, message)
+      authorize: (ability: string, subject?: any, message?: string) => this.authorize(ability, subject, user, message),
+      inspect: (ability: string, subject?: any) => this.inspect(ability, subject, user),
+      allowIf: (condition: boolean | ((user: any) => boolean | Promise<boolean>), message?: string) => this.inline(condition, true, message, user),
+      denyIf: (condition: boolean | ((user: any) => boolean | Promise<boolean>), message?: string) => this.inline(condition, false, message, user)
     }
   }
 
   async inspect(ability: string, subject?: any, user = currentUser()) {
     if (this.fakeResult !== undefined) {
       return this.fakeResult
-        ? { allowed: true as const, message: undefined }
-        : { allowed: false as const, message: 'This action is unauthorized.' }
+        ? AuthorizationResponse.allow()
+        : AuthorizationResponse.deny()
     }
 
     const args = Array.isArray(subject) ? subject : [subject].filter(Boolean)
@@ -80,27 +115,33 @@ export class GateManager {
   }
 
   private async callPolicy(user: any, ability: string, subject: any) {
-    if (!subject) return { allowed: false as const, message: 'This action is unauthorized.' }
+    if (!subject) return AuthorizationResponse.deny()
     const modelName = this.policyNameFor(subject)
     const Policy = await this.resolvePolicy(modelName)
-    if (!Policy) return { allowed: false as const, message: 'This action is unauthorized.' }
+    if (!Policy) return AuthorizationResponse.deny()
     const policy = new Policy()
     const handler = policy[ability]
-    if (typeof handler !== 'function') return { allowed: false as const, message: 'This action is unauthorized.' }
+    if (typeof handler !== 'function') return AuthorizationResponse.deny()
     return this.normalizeDecision(await handler.call(policy, user, subject))
   }
 
-  private normalizeDecision(result: AuthorizationDecision): AuthorizationResult {
+  private normalizeDecision(result: AuthorizationDecision): AuthorizationResponse {
+    if (result instanceof AuthorizationResponse) return result
     if (typeof result === 'object' && result !== null && 'allowed' in result) {
-      return {
-        allowed: Boolean(result.allowed),
-        message: result.message ?? 'This action is unauthorized.'
-      }
+      return new AuthorizationResponse(Boolean(result.allowed), result.message, result.status)
     }
     if (typeof result === 'string') {
-      return { allowed: false, message: result }
+      return AuthorizationResponse.deny(result)
     }
-    return { allowed: Boolean(result), message: 'This action is unauthorized.' }
+    return result ? AuthorizationResponse.allow() : AuthorizationResponse.deny()
+  }
+
+  private async inline(condition: boolean | ((user: any) => boolean | Promise<boolean>), shouldAllow: boolean, message?: string, user = currentUser()) {
+    const passes = typeof condition === 'function' ? await condition(user) : condition
+    const allowed = shouldAllow ? Boolean(passes) : !passes
+    const response = allowed ? AuthorizationResponse.allow() : AuthorizationResponse.deny(message)
+    response.authorize()
+    return true
   }
 
   private policyNameFor(subject: any) {

@@ -140,7 +140,7 @@ describe('HTTP & Routing Extras', () => {
     // Run route:cache CLI command
     await runCliCommand(['route:cache'])
 
-    const cachePath = path.join(root, 'src', 'bootstrap', 'cache', 'routes.json')
+    const cachePath = path.join(root, 'src', 'storage', 'framework', 'routes.json')
     expect(fsSync.existsSync(cachePath)).toBe(true)
 
     // Clear all routes from memory

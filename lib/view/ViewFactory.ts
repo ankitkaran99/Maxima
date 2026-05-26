@@ -1,14 +1,23 @@
 import { Edge } from 'edge.js'
 import { migrate } from 'edge.js/plugins/migrate'
 import fs from 'node:fs/promises'
+import fsSync from 'node:fs'
 import path from 'node:path'
-import { resourcePath, trans, transChoice } from '@lib/foundation/helpers.js'
+import crypto from 'node:crypto'
+import { app, env, resourcePath, storagePath, trans, transChoice } from '@lib/foundation/helpers.js'
 import { Gate } from '@lib/auth/Gate.js'
+
+type ViewCallback = (data: Record<string, unknown>, view: { name: string, path: string }) => void | Promise<void>
 
 export class ViewFactory {
   private edge = Edge.create()
+  private shared: Record<string, unknown> = {}
+  private composers: { pattern: string | RegExp, callback: ViewCallback }[] = []
+  private creators: { pattern: string | RegExp, callback: ViewCallback }[] = []
+  private compiledPath: string
 
-  constructor(private rootPath = resourcePath()) {
+  constructor(private rootPath = resourcePath(), compiledPath = storagePath('framework/views')) {
+    this.compiledPath = compiledPath
     this.edge.use(migrate)
     this.registerLoopDirectives()
     this.edge.mount(`${this.rootPath}/views`)
@@ -17,6 +26,7 @@ export class ViewFactory {
     this.edge.global('authUser', undefined)
     this.edge.global('csrf_field', () => (global as any).csrf_field?.() ?? '')
     this.edge.global('Gate', Gate)
+    this.edge.global('env', env)
     this.edge.global('trans', trans)
     this.edge.global('transChoice', transChoice)
     this.edge.global('__isEmpty', (value: any) => {
@@ -25,6 +35,10 @@ export class ViewFactory {
       if (typeof value === 'object') return Object.keys(value).length === 0
       return false
     })
+    this.edge.global('__isEnvironment', (expected: string | string[]) => {
+      const current = String(env('APP_ENV', 'local'))
+      return Array.isArray(expected) ? expected.includes(current) : current === expected
+    })
     this.edge.global('__canAny', async (abilities: string[] | string, subject?: any) => {
       const list = Array.isArray(abilities) ? abilities : [abilities]
       for (const ability of list) {
@@ -32,15 +46,57 @@ export class ViewFactory {
       }
       return false
     })
+    this.edge.global('__entries', (value: any) => {
+      const items = Array.isArray(value) ? value : Object.values(value ?? {})
+      const count = items.length
+      return items.map((entry, index) => ({
+        value: entry,
+        loop: {
+          index,
+          iteration: index + 1,
+          remaining: count - index - 1,
+          count,
+          first: index === 0,
+          last: index === count - 1,
+          even: (index + 1) % 2 === 0,
+          odd: (index + 1) % 2 === 1,
+          depth: 1
+        }
+      }))
+    })
     this.edge.global('__range', (start: number, end: number) => {
       const output: number[] = []
       for (let i = Number(start); i < Number(end); i++) output.push(i)
       return output
     })
+    this.edge.global('__json', (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003C').replace(/>/g, '\\u003E').replace(/&/g, '\\u0026').replace(/'/g, '\\u0027'))
+    this.edge.global('__classList', (value: Record<string, boolean> | Array<string | Record<string, boolean>> | string) => {
+      if (typeof value === 'string') return value
+      const entries = Array.isArray(value) ? value.flatMap(item => typeof item === 'string' ? [[item, true]] : Object.entries(item)) : Object.entries(value)
+      return entries.filter(([, enabled]) => !!enabled).map(([name]) => name).join(' ')
+    })
+    this.edge.global('__styleList', (value: Record<string, string | number | boolean>) => {
+      return Object.entries(value)
+        .filter(([, enabled]) => enabled !== false && enabled !== undefined && enabled !== null)
+        .map(([name, style]) => style === true ? name : `${name}: ${style}`)
+        .join('; ')
+    })
   }
 
   share(key: string, value: unknown) {
+    this.shared[key] = value
     this.edge.global(key, value)
+    return this
+  }
+
+  composer(pattern: string | string[] | RegExp, callback: ViewCallback) {
+    for (const item of Array.isArray(pattern) ? pattern : [pattern]) this.composers.push({ pattern: item, callback })
+    return this
+  }
+
+  creator(pattern: string | string[] | RegExp, callback: ViewCallback) {
+    for (const item of Array.isArray(pattern) ? pattern : [pattern]) this.creators.push({ pattern: item, callback })
+    return this
   }
 
   render(template: string, data: Record<string, unknown> = {}) {
@@ -48,16 +104,57 @@ export class ViewFactory {
   }
 
   renderEmail(template: string, data: Record<string, unknown> = {}) {
-    return this.edge.render(`emails::${template.replaceAll('.', '/')}`, { __onceKeys: new Set<string>(), ...data })
+    return this.edge.render(`emails::${template.replaceAll('.', '/')}`, this.baseData(data))
+  }
+
+  async renderInline(template: string, data: Record<string, unknown> = {}) {
+    const compiled = this.compileDirectives(template)
+    return this.edge.renderRaw(compiled, this.baseData(data), `inline:${this.cacheKey(compiled)}`)
+  }
+
+  async renderFragment(template: string, fragment: string, data: Record<string, unknown> = {}) {
+    const file = this.resolveViewPath(template.replaceAll('.', '/'))
+    const contents = await this.applyLayout(await fs.readFile(file, 'utf8'), file)
+    const pattern = new RegExp(`@fragment\\(\\s*['"]${this.escapeRegExp(fragment)}['"]\\s*\\)([\\s\\S]*?)@endfragment\\b`)
+    const match = contents.match(pattern)
+    if (!match) return ''
+    const compiled = this.compileDirectives(match[1])
+    return this.edge.renderRaw(compiled, this.baseData(data), `fragment:${template}:${fragment}:${this.cacheKey(compiled)}`)
+  }
+
+  exists(template: string) {
+    return fsSync.existsSync(this.resolveViewPath(template.replaceAll('.', '/')))
+  }
+
+  async first(templates: string[], data: Record<string, unknown> = {}) {
+    const match = templates.find(template => this.exists(template))
+    if (!match) throw new Error(`None of the requested views exist: ${templates.join(', ')}`)
+    return this.render(match, data)
+  }
+
+  async cacheViews() {
+    await fs.mkdir(this.compiledPath, { recursive: true })
+    const root = path.join(this.rootPath, 'views')
+    if (!fsSync.existsSync(root)) return []
+    const files = await this.viewFiles(root)
+    const compiled: string[] = []
+    for (const file of files) {
+      await this.compiledTemplate(file, file)
+      compiled.push(file)
+    }
+    return compiled
   }
 
   private async renderTemplate(template: string, data: Record<string, unknown>) {
-    const file = path.join(this.rootPath, 'views', `${template}.edge`)
-    const contents = await this.applyLayout(await fs.readFile(file, 'utf8'))
-    return this.edge.renderRaw(this.compileDirectives(contents), { __onceKeys: new Set<string>(), ...data }, template)
+    const file = this.resolveViewPath(template)
+    const viewData = this.baseData(data)
+    await this.runCallbacks(this.creators, template, file, viewData)
+    await this.runCallbacks(this.composers, template, file, viewData)
+    const compiled = await this.compiledTemplate(file, template)
+    return this.edge.renderRaw(compiled, viewData, `${template}:${this.cacheKey(compiled)}`)
   }
 
-  private async applyLayout(contents: string) {
+  private async applyLayout(contents: string, sourcePath: string) {
     const layoutMatch = contents.match(/@extends\(\s*['"]([^'"]+)['"]\s*\)/)
     if (!layoutMatch) return contents
 
@@ -74,6 +171,9 @@ export class ViewFactory {
       const section = sections.get(name)
       return section ? section.replace(/@parent\b/g, fallback) : fallback
     })
+    layout = layout.replace(/@hasSection\(\s*['"]([^'"]+)['"]\s*\)([\s\S]*?)@endif\b/g, (_match, name, body) => sections.has(name) ? body : '')
+    layout = layout.replace(/@sectionMissing\(\s*['"]([^'"]+)['"]\s*\)([\s\S]*?)@endif\b/g, (_match, name, body) => sections.has(name) ? '' : body)
+    if (sourcePath) layout = layout.replace(layoutMatch[0], '')
     return layout
   }
 
@@ -87,32 +187,44 @@ export class ViewFactory {
 
   private compileDirectives(contents: string) {
     let onceIndex = 0
-    return contents
+    const verbatim: string[] = []
+    const escaped: string[] = []
+    contents = contents
+      .replace(/@@([A-Za-z_][\w]*)/g, (_match, directive) => {
+        const key = `__ESCAPED_BLADE_${escaped.length}__`
+        escaped.push(`@${directive}`)
+        return key
+      })
+      .replace(/@verbatim\b([\s\S]*?)@endverbatim\b/g, (_match, body) => {
+        const key = `__VERBATIM_BLADE_${verbatim.length}__`
+        verbatim.push(body)
+        return key
+      })
+      .replace(/\{\{--[\s\S]*?--\}\}/g, '')
+
+    contents = this.compileSwitches(contents)
+    contents = contents
       .replace(/@once\b([\s\S]*?)@endonce\b/g, (_match, body) => {
         const key = `once:${onceIndex++}`
         return `@if(!__onceKeys.has('${key}'))\n@eval(__onceKeys.add('${key}'))\n${body}\n@endif`
       })
       .replace(/@ignore\b([\s\S]*?)@endignore\b/g, (_match, body) => body.replaceAll('@', '&#64;'))
-      .replace(/@yield\(([^)]*)\)/g, '@section($1)\n@endsection')
       .replace(/@parent\b/g, '@super')
       .replace(/@show\b|@overwrite\b|@append\b/g, '@endsection')
-      .replace(/@includeWhen\(([^,]+),\s*([^)]+)\)/g, '@includeIf($1, $2)')
-      .replace(/@includeUnless\(([^,]+),\s*([^)]+)\)/g, '@unless($1)\n@include($2)\n@endunless')
-      .replace(/@eachelse\(\s*\$?([A-Za-z_$][\w$.\[\]]*)\s+as\s+\$?([A-Za-z_$][\w$]*)\s*\)/g, '@each($2 in $1)')
-      .replace(/@endeachelse\b/g, '@endeach')
-      .replace(/@auth\b([\s\S]*?)@endauth\b/g, '@if(authUser)\n$1\n@endif')
-      .replace(/@guest\b([\s\S]*?)@endguest\b/g, '@if(!authUser)\n$1\n@endif')
+      .replace(/@auth(?:\([^)]*\))?\b([\s\S]*?)@endauth\b/g, '@if(authUser)\n$1\n@endif')
+      .replace(/@guest(?:\([^)]*\))?\b([\s\S]*?)@endguest\b/g, '@if(!authUser)\n$1\n@endif')
       .replace(/@can\(([^)]*)\)([\s\S]*?)@endcan\b/g, '@if(await Gate.allows($1))\n$2\n@endif')
       .replace(/@cannot\(([^)]*)\)([\s\S]*?)@endcannot\b/g, '@if(await Gate.denies($1))\n$2\n@endif')
       .replace(/@canany\(([^)]*)\)([\s\S]*?)@endcanany\b/g, '@if(await __canAny($1))\n$2\n@endif')
       .replace(/@isset\(([^)]*)\)([\s\S]*?)@endisset\b/g, '@if(($1) !== undefined && ($1) !== null)\n$2\n@endif')
       .replace(/@empty\(([^)]*)\)([\s\S]*?)@endempty\b/g, '@if(__isEmpty($1))\n$2\n@endif')
-      .replace(/@env\(([^)]*)\)([\s\S]*?)@endenv\b/g, '@if(env("APP_ENV", "local") === ($1))\n$2\n@endif')
+      .replace(/@production\b([\s\S]*?)@endproduction\b/g, '@if(__isEnvironment("production"))\n$1\n@endif')
+      .replace(/@env\(([^)]*)\)([\s\S]*?)@endenv\b/g, '@if(__isEnvironment($1))\n$2\n@endif')
       .replace(/@session\(([^)]*)\)([\s\S]*?)@endsession\b/g, '@if(session && session[$1] !== undefined)\n$2\n@endif')
       .replace(/@error\(([^)]*)\)([\s\S]*?)@enderror\b/g, '@if(errors && errors[$1])\n@set("message", Array.isArray(errors[$1]) ? errors[$1][0] : errors[$1])\n$2\n@endif')
-      .replace(/@auth\b/g, '@if(authUser)')
+      .replace(/@auth(?:\([^)]*\))?\b/g, '@if(authUser)')
       .replace(/@endauth\b/g, '@endif')
-      .replace(/@guest\b/g, '@if(!authUser)')
+      .replace(/@guest(?:\([^)]*\))?\b/g, '@if(!authUser)')
       .replace(/@endguest\b/g, '@endif')
       .replace(/@can\(([^)]*)\)/g, '@if(await Gate.allows($1))')
       .replace(/@cannot\(([^)]*)\)/g, '@if(await Gate.denies($1))')
@@ -125,10 +237,17 @@ export class ViewFactory {
       .replace(/@empty\(([^)]*)\)/g, '@if(__isEmpty($1))')
       .replace(/@endempty\b/g, '@endif')
       .replace(/@empty\b/g, '@else')
-      .replace(/@env\(([^)]*)\)/g, '@if(env("APP_ENV", "local") === ($1))')
+      .replace(/@production\b/g, '@if(__isEnvironment("production"))')
+      .replace(/@endproduction\b/g, '@endif')
+      .replace(/@env\(([^)]*)\)/g, '@if(__isEnvironment($1))')
       .replace(/@endenv\b/g, '@endif')
+      .replace(/@fragment\(([^)]*)\)([\s\S]*?)@endfragment\b/g, '$2')
       .replace(/@lang\(([^)]*)\)/g, '{{ await trans($1) }}')
       .replace(/@choice\(([^)]*)\)/g, '{{ await transChoice($1) }}')
+      .replace(/@json\(([^)]*)\)/g, '{{{ __json($1) }}}')
+      .replace(/@js\(([^)]*)\)/g, '{{{ __json($1) }}}')
+      .replace(/@class\(([^)]*)\)/g, '{{ __classList($1) }}')
+      .replace(/@style\(([^)]*)\)/g, '{{ __styleList($1) }}')
       .replace(/@csrf\b/g, '{{{ csrf_field() }}}')
       .replace(/@method\(([^)]*)\)/g, '<input type="hidden" name="_method" value="{{ $1 }}">')
       .replace(/@checked\(([^)]*)\)/g, '{{ $1 ? "checked" : "" }}')
@@ -137,6 +256,10 @@ export class ViewFactory {
       .replace(/@readonly\(([^)]*)\)/g, '{{ $1 ? "readonly" : "" }}')
       .replace(/@required\(([^)]*)\)/g, '{{ $1 ? "required" : "" }}')
       .replace(/^\s+(@layout\()/, '$1')
+      .replace(/__ESCAPED_BLADE_(\d+)__/g, (_match, index) => escaped[Number(index)])
+      .replace(/__VERBATIM_BLADE_(\d+)__/g, (_match, index) => `{{{ ${JSON.stringify(verbatim[Number(index)])} }}}`)
+
+    return contents
   }
 
   private registerLoopDirectives() {
@@ -264,4 +387,72 @@ export class ViewFactory {
     parts.push(current)
     return parts
   }
+
+  private baseData(data: Record<string, unknown>) {
+    return { ...this.shared, __onceKeys: new Set<string>(), app, ...data }
+  }
+
+  private resolveViewPath(template: string) {
+    return path.join(this.rootPath, 'views', `${template}.edge`)
+  }
+
+  private async compiledTemplate(file: string, template: string) {
+    const stat = await fs.stat(file)
+    const cacheFile = path.join(this.compiledPath, `${crypto.createHash('sha1').update(file).digest('hex')}.edge`)
+    if (fsSync.existsSync(cacheFile)) {
+      const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as { mtimeMs: number, compiled: string }
+      if (cached.mtimeMs >= stat.mtimeMs) return cached.compiled
+    }
+    const contents = await this.applyLayout(await fs.readFile(file, 'utf8'), file)
+    const compiled = this.compileDirectives(contents)
+    await fs.mkdir(this.compiledPath, { recursive: true })
+    await fs.writeFile(cacheFile, JSON.stringify({ source: file, template, mtimeMs: stat.mtimeMs, compiled }))
+    return compiled
+  }
+
+  private cacheKey(value: string) {
+    return crypto.createHash('sha1').update(value).digest('hex')
+  }
+
+  private escapeRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  private async viewFiles(dir: string): Promise<string[]> {
+    const entries = await fs.readdir(dir, { withFileTypes: true })
+    const files = await Promise.all(entries.map(entry => {
+      const target = path.join(dir, entry.name)
+      return entry.isDirectory() ? this.viewFiles(target) : Promise.resolve(entry.name.endsWith('.edge') ? [target] : [])
+    }))
+    return files.flat()
+  }
+
+  private async runCallbacks(callbacks: { pattern: string | RegExp, callback: ViewCallback }[], name: string, file: string, data: Record<string, unknown>) {
+    for (const item of callbacks) {
+      if (!this.matchesViewPattern(item.pattern, name)) continue
+      await item.callback(data, { name, path: file })
+    }
+  }
+
+  private matchesViewPattern(pattern: string | RegExp, name: string) {
+    if (pattern instanceof RegExp) return pattern.test(name)
+    if (pattern === '*' || pattern === name || pattern === name.replaceAll('/', '.')) return true
+    const regex = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('\\*', '.*')}$`)
+    return regex.test(name) || regex.test(name.replaceAll('/', '.'))
+  }
+
+  private compileSwitches(contents: string) {
+    let index = 0
+    return contents.replace(/@switch\(([^)]*)\)([\s\S]*?)@endswitch\b/g, (_match, expression, body) => {
+      const cases = [...body.matchAll(/@(case|default)(?:\(([^)]*)\))?([\s\S]*?)(?=@case\(|@default\b|$)/g)]
+      let output = ''
+      for (const [caseIndex, item] of cases.entries()) {
+        const caseBody = item[3].replace(/@break\b/g, '')
+        if (item[1] === 'default') output += `${caseIndex === 0 ? '@else' : '@else'}\n${caseBody}`
+        else output += `${caseIndex === 0 ? '@if' : '@elseif'}(__switch${index} === ${item[2]})\n${caseBody}`
+      }
+      return `@set("__switch${index}", ${expression})\n${output}\n@endif`
+    })
+  }
+
 }

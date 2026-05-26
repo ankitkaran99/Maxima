@@ -6,6 +6,7 @@ import { ConfigRepository } from '@lib/config/ConfigRepository.js'
 import { EnvRepository } from '@lib/config/Env.js'
 
 const tempRoots: string[] = []
+const originalBasePath = process.env.MAXIMA_BASE_PATH
 
 async function makeTempRoot() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'maxima-config-'))
@@ -14,6 +15,7 @@ async function makeTempRoot() {
 }
 
 afterEach(async () => {
+  process.env.MAXIMA_BASE_PATH = originalBasePath
   await Promise.all(tempRoots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })))
 })
 
@@ -59,8 +61,9 @@ describe('Configuration', () => {
 
   it('loads cached config before source config files', async () => {
     const root = await makeTempRoot()
+    process.env.MAXIMA_BASE_PATH = root
     const configDir = path.join(root, 'config')
-    const cacheDir = path.join(root, 'bootstrap', 'cache')
+    const cacheDir = path.join(root, 'storage', 'framework')
     await fs.mkdir(configDir, { recursive: true })
     await fs.mkdir(cacheDir, { recursive: true })
     await fs.writeFile(path.join(configDir, 'app.js'), 'export default { name: "FromSource" }\n')
@@ -74,7 +77,7 @@ describe('Configuration', () => {
 
   it('writes a config cache file', async () => {
     const root = await makeTempRoot()
-    const target = path.join(root, 'bootstrap', 'cache', 'config.json')
+    const target = path.join(root, 'storage', 'framework', 'config.json')
     const config = new ConfigRepository()
     config.set('app.name', 'Maxima')
 

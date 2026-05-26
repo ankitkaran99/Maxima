@@ -1,9 +1,10 @@
-import argon2 from 'argon2'
 import crypto from 'node:crypto'
 import { DB } from '@lib/database/DB.js'
 import { config } from '@lib/foundation/helpers.js'
 import { response, signedUrl } from '@lib/foundation/helpers.js'
 import { Gate, setCurrentUserResolver } from '@lib/auth/Gate.js'
+import { Event } from '@lib/events/Event.js'
+import { Hash } from '@lib/security/Hash.js'
 import { Mail } from '@lib/mail/Mail.js'
 import { decodeCookie } from '@lib/session/Session.js'
 import { EmailVerificationMail, PasswordResetMail } from '@lib/auth/Mailables.js'
@@ -13,9 +14,33 @@ export interface UserProvider {
   retrieveByCredentials(credentials: Record<string, any>): Promise<any>
 }
 
+export class AuthAttempting {
+  constructor(public guard: string, public credentials: Record<string, any>, public remember: boolean) {}
+}
+
+export class AuthValidated {
+  constructor(public guard: string, public user: any) {}
+}
+
+export class AuthLogin {
+  constructor(public guard: string, public user: any, public remember: boolean) {}
+}
+
+export class AuthFailed {
+  constructor(public guard: string, public credentials: Record<string, any>) {}
+}
+
+export class AuthLogout {
+  constructor(public guard: string, public user: any) {}
+}
+
+type RequestGuard = (request: any) => any | Promise<any>
+
 export class AuthManager {
   private request?: any
   private reply?: any
+  private requestGuards = new Map<string, RequestGuard>()
+  private customProviders = new Map<string, (config: any) => UserProvider>()
 
   setRequest(request: any, reply?: any) {
     this.request = request
@@ -39,21 +64,36 @@ export class AuthManager {
 
   async attempt(credentials: Record<string, any>, guard = config<string>('auth.defaults.guard', 'session'), remember = Boolean(credentials.remember)) {
     if (!this.request) throw new Error('Auth request context has not been set.')
+    if (await this.tooManyLoginAttempts(credentials, guard)) {
+      await Event.dispatchAsync(new AuthFailed(guard, credentials))
+      return false
+    }
+    await Event.dispatchAsync(new AuthAttempting(guard, credentials, remember))
     const provider = this.providerForGuard(guard)
     const { remember: _remember, ...loginCredentials } = credentials
     const user = await provider.retrieveByCredentials(loginCredentials)
-    if (!user || !(await this.verify(credentials.password, user.password))) return false
+    if (!user || !(await this.verify(credentials.password, user.password))) {
+      await this.hitLoginThrottle(credentials, guard)
+      await Event.dispatchAsync(new AuthFailed(guard, loginCredentials))
+      return false
+    }
+    await this.clearLoginThrottle(credentials, guard)
+    await Event.dispatchAsync(new AuthValidated(guard, user))
     this.request.user = this.decorateUser(user)
-    if (guard === 'session') this.request.session?.put?.('auth_user_id', user.id)
+    this.storeSessionUserId(guard, user.id)
     if (remember) await this.rememberUser(user, guard)
+    await Event.dispatchAsync(new AuthLogin(guard, user, remember))
     return true
   }
 
-  async logout() {
+  async logout(guard = config<string>('auth.defaults.guard', 'session')) {
     if (!this.request) return
+    const user = this.request.user
     await this.clearRememberedUser()
     this.request.user = null
-    this.request.session?.forget?.('auth_user_id')
+    this.request.session?.forget?.(this.sessionKey(guard))
+    if (guard === 'session') this.request.session?.forget?.('auth_user_id')
+    await Event.dispatchAsync(new AuthLogout(guard, user))
   }
 
   async remember(user: any, guard = config<string>('auth.defaults.guard', 'session')) {
@@ -150,16 +190,47 @@ export class AuthManager {
   }
 
   async hash(value: string) {
-    return argon2.hash(value)
+    return Hash.make(value)
   }
 
   async verify(value: string, hashed: string) {
-    return argon2.verify(hashed, value)
+    return Hash.check(value, hashed)
+  }
+
+  needsRehash(hashed: string, options: any = {}) {
+    return Hash.needsRehash(hashed, options)
+  }
+
+  viaRequest(name: string, callback: RequestGuard) {
+    this.requestGuards.set(name, callback)
+    return this
+  }
+
+  providerUsing(name: string, factory: (config: any) => UserProvider) {
+    this.customProviders.set(name, factory)
+    return this
+  }
+
+  async tooManyLoginAttempts(credentials: Record<string, any>, guard = config<string>('auth.defaults.guard', 'session')) {
+    const throttle = config<Record<string, any>>('auth.throttle', {})
+    if (throttle.enabled === false) return false
+    const { Cache } = await import('@lib/cache/Cache.js')
+    const record = await Cache.get<{ count: number, resetAt: number }>(this.loginThrottleKey(credentials, guard))
+    return Boolean(record && record.resetAt > Date.now() && record.count >= Number(throttle.maxAttempts ?? 5))
+  }
+
+  async availableIn(credentials: Record<string, any>, guard = config<string>('auth.defaults.guard', 'session')) {
+    const { Cache } = await import('@lib/cache/Cache.js')
+    const record = await Cache.get<{ count: number, resetAt: number }>(this.loginThrottleKey(credentials, guard))
+    return record ? Math.max(0, Math.ceil((record.resetAt - Date.now()) / 1000)) : 0
   }
 
   provider(name = config<string>('auth.defaults.provider', 'users')): UserProvider {
     const provider = config<any>(`auth.providers.${name}`)
     if (!provider?.driver) throw new Error(`Auth provider [${name}] is not configured.`)
+    if (typeof provider.driver === 'string' && this.customProviders.has(provider.driver)) {
+      return this.customProviders.get(provider.driver)!(provider)
+    }
     return typeof provider.driver === 'function' ? new provider.driver(provider) : provider.driver
   }
 
@@ -172,10 +243,16 @@ export class AuthManager {
   private async resolveUserFromGuard(guardName: string) {
     const guard = config<any>(`auth.guards.${guardName}`)
     if (!guard) throw new Error(`Auth guard [${guardName}] is not configured.`)
+    if (guard.driver === 'request') {
+      const resolver = this.requestGuards.get(guard.name ?? guardName)
+      if (!resolver) throw new Error(`Request guard [${guardName}] is not registered.`)
+      return resolver(this.request)
+    }
+
     const provider = this.provider(guard.provider ?? config<string>('auth.defaults.provider', 'users'))
 
     if (guard.driver === 'session') {
-      const id = this.request?.session?.get?.('auth_user_id')
+      const id = this.request?.session?.get?.(this.sessionKey(guardName)) ?? this.request?.session?.get?.('auth_user_id')
       if (id !== undefined && id !== null) return provider.retrieveById(id)
       return this.restoreRememberedUser(guardName)
     }
@@ -234,11 +311,44 @@ export class AuthManager {
     return user
   }
 
+  private async hitLoginThrottle(credentials: Record<string, any>, guard: string) {
+    const throttle = config<Record<string, any>>('auth.throttle', {})
+    if (throttle.enabled === false) return
+    const decaySeconds = Number(throttle.decaySeconds ?? 60)
+    const { Cache } = await import('@lib/cache/Cache.js')
+    const key = this.loginThrottleKey(credentials, guard)
+    const existing = await Cache.get<{ count: number, resetAt: number }>(key)
+    const resetAt = existing && existing.resetAt > Date.now() ? existing.resetAt : Date.now() + decaySeconds * 1000
+    await Cache.put(key, { count: (existing?.count ?? 0) + 1, resetAt }, decaySeconds)
+  }
+
+  private async clearLoginThrottle(credentials: Record<string, any>, guard: string) {
+    const { Cache } = await import('@lib/cache/Cache.js')
+    await Cache.forget(this.loginThrottleKey(credentials, guard))
+  }
+
+  private loginThrottleKey(credentials: Record<string, any>, guard: string) {
+    const login = credentials.email ?? credentials.username ?? credentials.login ?? 'guest'
+    const ip = this.request?.ip ?? this.request?.headers?.['x-forwarded-for'] ?? 'local'
+    return `auth:login:${guard}:${String(login).toLowerCase()}:${ip}`
+  }
+
+  private storeSessionUserId(guard: string, userId: string | number) {
+    const driver = config<string>(`auth.guards.${guard}.driver`, guard)
+    if (driver !== 'session') return
+    this.request?.session?.put?.(this.sessionKey(guard), userId)
+    if (guard === 'session') this.request?.session?.put?.('auth_user_id', userId)
+  }
+
+  private sessionKey(guard: string) {
+    return `auth_${guard}_user_id`
+  }
+
   private async rememberUser(user: any, guard: string) {
     if (!this.request) return false
     const configRemember = config<Record<string, any>>('auth.remember', {})
     const token = crypto.randomUUID()
-    const cookieName = configRemember.cookie ?? `remember_${guard}`
+    const cookieName = this.rememberCookieName(guard, configRemember)
     const payload = { userId: user.id, guard, token }
     try {
       await DB.table(configRemember.table ?? 'remember_tokens').where({ user_id: user.id, guard }).delete().catch(() => {})
@@ -267,7 +377,7 @@ export class AuthManager {
 
   private async restoreRememberedUser(guard: string) {
     const configRemember = config<Record<string, any>>('auth.remember', {})
-    const cookieName = configRemember.cookie ?? `remember_${guard}`
+    const cookieName = this.rememberCookieName(guard, configRemember)
     const raw = this.request?.cookies?.[cookieName] ?? this.request?.raw?.cookies?.[cookieName]
     const decoded = decodeCookie(raw, { encrypted: true, signed: true })
     if (!decoded) return null
@@ -286,13 +396,17 @@ export class AuthManager {
 
     const provider = this.provider(config<string>('auth.defaults.provider', 'users'))
     const user = await provider.retrieveById(payload.userId)
-    if (user) this.request.session?.put?.('auth_user_id', user.id)
+    if (user) {
+      this.request.session?.put?.(this.sessionKey(guard), user.id)
+      if (guard === 'session') this.request.session?.put?.('auth_user_id', user.id)
+    }
     return user ? this.decorateUser(user) : null
   }
 
   private async clearRememberedUser() {
     const configRemember = config<Record<string, any>>('auth.remember', {})
-    const cookieName = configRemember.cookie ?? `remember_${config<string>('auth.defaults.guard', 'session')}`
+    const defaultGuard = config<string>('auth.defaults.guard', 'session')
+    const cookieName = this.rememberCookieName(defaultGuard, configRemember)
     const raw = this.request?.cookies?.[cookieName] ?? this.request?.raw?.cookies?.[cookieName]
     const decoded = decodeCookie(raw, { encrypted: true, signed: true })
     if (decoded) {
@@ -343,6 +457,17 @@ export class AuthManager {
   private async getRememberToken(userId: string | number, guard: string) {
     const table = config<string>('auth.remember.table', 'remember_tokens')
     return DB.table(table).where({ user_id: userId, guard }).first().catch(() => null)
+  }
+
+  private rememberCookieName(guard: string, rememberConfig: Record<string, any> = {}) {
+    if (rememberConfig.cookie) return String(rememberConfig.cookie)
+    const appName = config<string>('app.name', 'Maxima')
+    const slug = String(appName)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'maxima'
+    return `${slug}_remember_${guard}`
   }
 
   private async getVerifiedEmail(user: any) {

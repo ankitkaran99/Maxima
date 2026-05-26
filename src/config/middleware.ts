@@ -1,4 +1,4 @@
-import { AuthMiddleware, CanMiddleware, GuestMiddleware, PasswordConfirmedMiddleware, VerifiedMiddleware } from '@lib/auth/Middleware.js'
+import { AbilitiesMiddleware, AbilityMiddleware, AuthMiddleware, CanMiddleware, GuestMiddleware, PasswordConfirmedMiddleware, VerifiedMiddleware } from '@lib/auth/Middleware.js'
 import { RequestLoggerMiddleware } from '@lib/logging/RequestLoggerMiddleware.js'
 import { CookieMiddleware, CsrfMiddleware, SessionMiddleware, ThrottleMiddleware, SignedMiddleware } from '@lib/http/SecurityMiddleware.js'
 import { ShareErrorsFromSessionMiddleware } from '@lib/validation/ValidationMiddleware.js'
@@ -21,6 +21,8 @@ export default {
     can: CanMiddleware,
     verified: VerifiedMiddleware,
     passwordConfirmed: PasswordConfirmedMiddleware,
+    abilities: AbilitiesMiddleware,
+    ability: AbilityMiddleware,
     shareErrorsFromSession: ShareErrorsFromSessionMiddleware
   }
 }

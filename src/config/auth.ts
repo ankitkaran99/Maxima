@@ -25,7 +25,6 @@ export default {
     }
   },
   remember: {
-    cookie: 'maxima_remember_session',
     table: 'remember_tokens',
     lifetimeDays: 30
   },
@@ -38,6 +37,11 @@ export default {
     expires: 60
   },
   passwordTimeout: 10800,
+  throttle: {
+    enabled: true,
+    maxAttempts: 5,
+    decaySeconds: 60
+  },
   jwt: {
     enabled: false,
     secret: env('AUTH_JWT_SECRET', env('APP_KEY', 'maxima-secret')),

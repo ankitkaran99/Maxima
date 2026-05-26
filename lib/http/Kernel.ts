@@ -52,7 +52,10 @@ export class HttpKernel {
     await this.bootstrap()
     await this.server.listen({ port, host })
 
-    console.log(`Server running at http://${host}:${port}`)
+    return {
+      port,
+      host
+    }
   }
 
   private async registerFastifyPlugins() {
@@ -68,7 +71,7 @@ export class HttpKernel {
   }
 
   private async loadRoutes() {
-    const cachePath = path.join(this.app.rootPath, 'bootstrap', 'cache', 'routes.json')
+    const cachePath = storagePath('framework/routes.json')
     if (fs.existsSync(cachePath)) {
       try {
         const content = fs.readFileSync(cachePath, 'utf8')
@@ -334,7 +337,7 @@ export class HttpKernel {
     if (!RequestClass) return request
 
     const formRequest = new RequestClass(request.raw, reply)
-    await formRequest.validateResolved()
+    await formRequest.validateResolved(key => this.app.make(key))
     return formRequest
   }
 
