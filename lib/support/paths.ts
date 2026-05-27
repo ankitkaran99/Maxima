@@ -2,17 +2,18 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-export function basePath(...segments: string[]) {
-  return path.resolve(process.env.MAXIMA_BASE_PATH ?? process.cwd(), ...segments)
-}
-
 function applicationRoot() {
-  const root = basePath()
+  const root = path.resolve(process.env.MAXIMA_BASE_PATH ?? process.cwd())
   if (!fs.existsSync(path.join(root, 'config')) && fs.existsSync(path.join(root, 'src', 'config'))) {
     return path.join(root, 'src')
   }
   return root
 }
+
+export function basePath(...segments: string[]) {
+  return path.resolve(applicationRoot(), ...segments)
+}
+
 
 export function appPath(...segments: string[]) {
   return basePath('app', ...segments)

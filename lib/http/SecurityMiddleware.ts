@@ -62,6 +62,7 @@ export class ThrottleMiddleware {
       }
 
       for (const limit of limits) {
+        if ((limit as any).unlimited) continue
         const max = limit.max
         const windowSeconds = limit.windowSeconds
         const key = limit.key || (request.user() ? `user:${request.user().id}` : `ip:${typeof request.ip === 'function' ? request.ip() : request.ip}`)
@@ -78,10 +79,14 @@ export class ThrottleMiddleware {
 
         if (limitData.count >= max) {
           const retryAfter = limitData.resetAt - now
+          const headers = {
+            'Retry-After': retryAfter,
+            'X-RateLimit-Limit': max,
+            'X-RateLimit-Remaining': 0
+          }
           reply.code(429)
-          reply.header('Retry-After', retryAfter)
-          reply.header('X-RateLimit-Limit', max)
-          reply.header('X-RateLimit-Remaining', 0)
+          for (const [name, value] of Object.entries(headers)) reply.header(name, value)
+          if ((limit as any).responseCallback) return reply.send(await Promise.resolve((limit as any).responseCallback(request, headers)))
           return reply.send({ message: 'Too Many Attempts.' })
         }
 
@@ -106,7 +111,7 @@ export class ThrottleMiddleware {
     } else if (parameter.includes(',')) {
       const [maxStr, minutesStr] = parameter.split(',')
       max = Number(maxStr || 60)
-      windowSeconds = Number(minutesStr || 1) * 60
+      windowSeconds = parseDecayToSeconds(minutesStr || '1')
     }
 
     const { Cache } = await import('@lib/cache/Cache.js')
@@ -153,6 +158,20 @@ function parseTimeWindow(window: string): number {
   if (unit === 'hour') return val * 3600
   if (unit === 'day') return val * 86400
   return 60
+}
+
+function parseDecayToSeconds(value: string): number {
+  const trimmed = String(value).trim()
+  const short = trimmed.match(/^(\d+)\s*(s|m|h|d)$/i)
+  if (short) {
+    const amount = Number(short[1])
+    const unit = short[2].toLowerCase()
+    if (unit === 's') return amount
+    if (unit === 'm') return amount * 60
+    if (unit === 'h') return amount * 3600
+    if (unit === 'd') return amount * 86400
+  }
+  return Number(trimmed || 1) * 60
 }
 
 export class SignedMiddleware {

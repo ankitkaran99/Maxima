@@ -10,7 +10,7 @@ import multipart from '@fastify/multipart'
 import rateLimit from '@fastify/rate-limit'
 import staticFiles from '@fastify/static'
 import { WebSocketServer } from 'ws'
-import { Broadcast } from '@lib/broadcast/Broadcast.js'
+import { Broadcast, normalizeChannelName } from '@lib/broadcast/Broadcast.js'
 import { Application } from '@lib/foundation/Application.js'
 import { config, publicPath, runWithRequestContext, storagePath } from '@lib/foundation/helpers.js'
 import { Request } from '@lib/http/Request.js'
@@ -41,6 +41,7 @@ export class HttpKernel {
   async bootstrap(options: { loadRoutes?: boolean } = {}) {
     await this.registerFastifyPlugins()
     if (options.loadRoutes ?? true) await this.loadRoutes()
+    this.registerBroadcastingRoutes()
     this.registerRoutes()
     this.registerErrorHandler()
     this.setupWebSockets()
@@ -136,7 +137,7 @@ export class HttpKernel {
       }
     }
 
-    for (const file of ['routes/web.js', 'routes/web.ts', 'routes/api.js', 'routes/api.ts']) {
+    for (const file of ['routes/web.js', 'routes/web.ts', 'routes/api.js', 'routes/api.ts', 'routes/channels.js', 'routes/channels.ts']) {
       const fullPath = path.join(this.app.rootPath, file)
       if (fs.existsSync(fullPath)) {
         try {
@@ -171,6 +172,28 @@ export class HttpKernel {
         }
       })
     }
+  }
+
+  private registerBroadcastingRoutes() {
+    this.server.post('/broadcasting/auth', async (rawRequest, reply) => {
+      const request = new Request(rawRequest, reply)
+      const middleware = await this.resolveRouteMiddleware(config<string[]>('broadcasting.middleware', ['web', 'auth']), [])
+      const middlewareComplete = await new MiddlewarePipeline(middleware).run(request, reply)
+      if (reply.sent) return
+      if (!middlewareComplete) return
+
+      const body = rawRequest.body as any ?? {}
+      const socketId = body.socket_id ?? body.socketId
+      const channelName = body.channel_name ?? body.channelName
+      const user = request.user?.() ?? body.user ?? body.authUser ?? (rawRequest as any).user ?? null
+      if (!socketId || !channelName) return reply.code(422).send({ message: 'socket_id and channel_name are required.' })
+
+      try {
+        return reply.send(await Broadcast.authResponse(user, socketId, channelName))
+      } catch {
+        return reply.code(403).send({ message: 'Unauthorized' })
+      }
+    })
   }
 
   private selectRoute(routes: RouteDefinition[], rawRequest: FastifyRequest) {
@@ -380,6 +403,9 @@ export class HttpKernel {
   }
 
   private async resolveRouteMiddleware(names: string[], excluded: string[] = []) {
+    const testingExcluded = this.app.config.get<string[]>('__testing.withoutMiddleware', [])
+    if (testingExcluded.includes('*')) return []
+    excluded = [...excluded, ...testingExcluded]
     const aliases = config<Record<string, any>>('middleware.aliases', {})
     const groups = config<Record<string, string[]>>('middleware.groups', {})
     const global = config<string[]>('middleware.global', [])
@@ -424,6 +450,7 @@ export class HttpKernel {
 
     this.server.setErrorHandler(async (error, request, reply) => {
       const exception = error as Error
+      if (this.app.config.get('__testing.withoutExceptionHandling', false)) throw exception
       const maximaRequest = (request as any).maximaRequest as Request | undefined
       const resolvedRequest = maximaRequest ?? new Request(request, reply)
       const response = new Response(reply)
@@ -540,13 +567,20 @@ export class HttpKernel {
     const subscriptions = new Map<any, Set<string>>()
 
     this.wss.on('connection', (ws) => {
+      ;(ws as any).socketId = `${Date.now()}.${Math.floor(Math.random() * 1_000_000)}`
       subscriptions.set(ws, new Set())
+      ws.send(JSON.stringify({
+        event: 'pusher:connection_established',
+        data: JSON.stringify({ socket_id: (ws as any).socketId, activity_timeout: 120 })
+      }))
 
       ws.on('message', async (messageData) => {
         try {
           const data = JSON.parse(messageData.toString())
-          if (data.event === 'subscribe') {
-            const channel = data.channel
+          const eventName = data.event
+          const eventData = normalizeSocketData(data.data ?? data)
+          if (eventName === 'subscribe' || eventName === 'pusher:subscribe') {
+            const channel = normalizeChannelName(eventData.channel ?? data.channel)
             if (!channel) return
 
             let authorized = false
@@ -554,11 +588,17 @@ export class HttpKernel {
             if (!channel.startsWith('private-') && !channel.startsWith('presence-')) {
               authorized = true
             } else {
-              if (data.auth) {
+              if (eventData.channel_data) {
+                try {
+                  const channelData = typeof eventData.channel_data === 'string' ? JSON.parse(eventData.channel_data) : eventData.channel_data
+                  user = channelData.user_info ?? { id: channelData.user_id }
+                } catch {}
+              }
+              if (!user && eventData.auth) {
                 try {
                   const { SessionManager } = await import('@lib/session/Session.js')
                   const sessionManager = new SessionManager()
-                  const fakeReq = { cookies: { maxima_session: data.auth } }
+                  const fakeReq = { cookies: { maxima_session: eventData.auth } }
                   const session = await sessionManager.load(fakeReq)
                   const userId = session.data?._user_id
                   if (userId) {
@@ -569,7 +609,7 @@ export class HttpKernel {
 
                 if (!user) {
                   try {
-                    user = JSON.parse(data.auth)
+                    user = JSON.parse(eventData.auth)
                   } catch {}
                 }
               }
@@ -586,17 +626,21 @@ export class HttpKernel {
               if (channel.startsWith('presence-')) {
                 const members = Broadcast.joinPresence(channel, user)
                 ws.send(JSON.stringify({ event: 'subscription_succeeded', channel, members }))
+                ws.send(JSON.stringify({ event: 'pusher_internal:subscription_succeeded', channel, data: JSON.stringify({ presence: { hash: presenceHash(members), count: members.length } }) }))
                 this.notifyPresence(subscriptions, channel, 'member_added', user, ws)
+                this.notifyPresence(subscriptions, channel, 'pusher_internal:member_added', user, ws)
               } else {
                 ws.send(JSON.stringify({ event: 'subscription_succeeded', channel }))
+                ws.send(JSON.stringify({ event: 'pusher_internal:subscription_succeeded', channel, data: '{}' }))
               }
             } else {
               ws.send(JSON.stringify({ event: 'subscription_error', channel, message: 'Unauthorized' }))
+              ws.send(JSON.stringify({ event: 'pusher:subscription_error', channel, data: { message: 'Unauthorized' } }))
             }
           }
 
-          if (data.event === 'unsubscribe') {
-            const channel = data.channel
+          if (eventName === 'unsubscribe' || eventName === 'pusher:unsubscribe') {
+            const channel = normalizeChannelName(eventData.channel ?? data.channel)
             if (channel) {
               subscriptions.get(ws)?.delete(channel)
               if (channel.startsWith('presence-')) {
@@ -604,9 +648,17 @@ export class HttpKernel {
                 if (user) {
                   Broadcast.leavePresence(channel, user)
                   this.notifyPresence(subscriptions, channel, 'member_removed', user, ws)
+                  this.notifyPresence(subscriptions, channel, 'pusher_internal:member_removed', user, ws)
                 }
               }
               ws.send(JSON.stringify({ event: 'unsubscribed', channel }))
+            }
+          }
+
+          if (typeof eventName === 'string' && eventName.startsWith('client-')) {
+            const channel = normalizeChannelName(eventData.channel ?? data.channel)
+            if (channel && subscriptions.get(ws)?.has(channel)) {
+              await Broadcast.clientEvent(channel, eventName, eventData.data ?? data.data ?? {}, (ws as any).socketId)
             }
           }
         } catch {}
@@ -619,6 +671,7 @@ export class HttpKernel {
             if (user) {
               Broadcast.leavePresence(channel, user)
               this.notifyPresence(subscriptions, channel, 'member_removed', user, ws)
+              this.notifyPresence(subscriptions, channel, 'pusher_internal:member_removed', user, ws)
             }
           }
         }
@@ -630,7 +683,7 @@ export class HttpKernel {
       const channels = Array.isArray(event.channels) ? event.channels : [event.channels]
       for (const [ws, subs] of subscriptions.entries()) {
         for (const channel of channels) {
-          if (subs.has(channel)) {
+          if (subs.has(channel) && event.socket !== (ws as any).socketId) {
             ws.send(JSON.stringify({
               event: event.name,
               channel: channel,
@@ -642,7 +695,7 @@ export class HttpKernel {
     })
 
     this.server.server.on('upgrade', (request, socket, head) => {
-      if (request.url?.startsWith('/ws') || request.url?.startsWith('/broadcasting')) {
+      if (request.url?.startsWith('/ws') || request.url?.startsWith('/broadcasting') || request.url?.startsWith('/app/')) {
         this.wss?.handleUpgrade(request, socket, head, (ws) => {
           this.wss?.emit('connection', ws, request)
         })
@@ -658,7 +711,7 @@ export class HttpKernel {
   }
 
   private isDownForMaintenance(url: string) {
-    if (url.startsWith('/assets/') || url.startsWith('/ws') || url.startsWith('/broadcasting')) return false
+    if (url.startsWith('/assets/') || url.startsWith('/ws') || url.startsWith('/broadcasting') || url.startsWith('/app/')) return false
     return fs.existsSync(storagePath('framework/down'))
   }
 
@@ -670,6 +723,21 @@ export class HttpKernel {
     }
     await this.server.close()
   }
+}
+
+function normalizeSocketData(data: any) {
+  if (typeof data === 'string') {
+    try {
+      return JSON.parse(data)
+    } catch {
+      return {}
+    }
+  }
+  return data ?? {}
+}
+
+function presenceHash(members: any[]) {
+  return Object.fromEntries(members.map(member => [String(member?.id ?? member?.uuid ?? member?.email), member]))
 }
 
 function matchDomain(pattern: string | undefined, host: string) {

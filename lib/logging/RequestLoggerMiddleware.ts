@@ -3,6 +3,7 @@ import type { FastifyReply } from 'fastify'
 import type { Request } from '@lib/http/Request.js'
 import type { Next } from '@lib/http/Middleware.js'
 import { Log } from '@lib/logging/LogManager.js'
+import { Telescope, Pulse } from '@lib/observability/Observability.js'
 
 export class RequestLoggerMiddleware {
   async handle(request: Request, reply: FastifyReply, next: Next) {
@@ -14,7 +15,11 @@ export class RequestLoggerMiddleware {
     await Log.runWithContext({ requestId }, async () => {
       request.log?.info('Incoming request', { method: request.raw.method, url: request.raw.url, userAgent: request.headers['user-agent'] })
       await next()
-      request.log?.info('Request completed', { statusCode: reply.statusCode, durationMs: Math.round(performance.now() - start) })
+      const durationMs = Math.round(performance.now() - start)
+      request.log?.info('Request completed', { statusCode: reply.statusCode, durationMs })
+      Telescope.record('request', { requestId, method: request.raw.method, url: request.raw.url, statusCode: reply.statusCode, durationMs })
+      Pulse.increment('requests')
+      Pulse.timing('requests.duration', durationMs)
     })
   }
 }

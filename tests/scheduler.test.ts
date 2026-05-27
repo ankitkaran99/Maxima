@@ -25,10 +25,13 @@ beforeEach(() => {
     default: 'console',
     channels: { console: { driver: 'null' } }
   })
+  app.config.set('cache.default', 'memory')
+  app.config.set('cache.stores.memory', { driver: 'memory', prefix: 'test' })
   Schedule.clear()
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await Schedule.clearCache()
   Schedule.clear()
 })
 
@@ -83,5 +86,48 @@ describe('Scheduler', () => {
     await first
 
     expect(called).toEqual(['start', 'finish'])
+  })
+
+  it('sets correct cron expressions for custom frequencies', () => {
+    Schedule.call('test1', () => {}).everyFiveMinutes()
+    Schedule.call('test2', () => {}).twiceDaily(3, 15)
+    Schedule.call('test3', () => {}).weekdays()
+    Schedule.call('test4', () => {}).weekends()
+    Schedule.call('test5', () => {}).cron('1 2 3 4 5')
+
+    const tasks = Schedule.all()
+    expect(tasks.find(t => t.name === 'test1')?.expression).toBe('*/5 * * * *')
+    expect(tasks.find(t => t.name === 'test2')?.expression).toBe('0 3,15 * * *')
+    expect(tasks.find(t => t.name === 'test3')?.expression).toBe('0 0 * * 1-5')
+    expect(tasks.find(t => t.name === 'test4')?.expression).toBe('0 0 * * 0,6')
+    expect(tasks.find(t => t.name === 'test5')?.expression).toBe('1 2 3 4 5')
+  })
+
+  it('lists and filters scheduled tasks with cache-backed mutexes', async () => {
+    const handled: string[] = []
+    Schedule.call('nightly', () => { handled.push('nightly') })
+      .dailyAt('23:30')
+      .timezone('UTC')
+      .between('00:00', '23:59')
+      .when(() => true)
+      .skip(() => false)
+      .onOneServer()
+      .withoutOverlapping()
+      .runInBackground()
+      .group('maintenance')
+
+    expect(Schedule.all()[0]).toMatchObject({
+      name: 'nightly',
+      timezone: 'UTC',
+      onOneServer: true,
+      background: true,
+      group: 'maintenance'
+    })
+
+    await Schedule.runDue()
+    await new Promise(resolve => setImmediate(resolve))
+    expect(handled).toContain('nightly')
+
+    await Schedule.clearCache()
   })
 })

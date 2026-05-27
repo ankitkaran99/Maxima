@@ -1,16 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WebSocket } from 'ws'
+import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { Application } from '@lib/foundation/Application.js'
 import { setApplication } from '@lib/foundation/helpers.js'
 import { HttpKernel } from '@lib/http/Kernel.js'
-import { Broadcast, type BroadcastableEvent } from '@lib/broadcast/Broadcast.js'
+import { DB } from '@lib/database/DB.js'
+import { Model } from '@lib/database/Model.js'
+import { Broadcast, Channel, EncryptedPrivateChannel, PrivateChannel, type BroadcastableEvent } from '@lib/broadcast/Broadcast.js'
+import { Response } from '@lib/http/Response.js'
+import { Route } from '@lib/http/Route.js'
 
 class TestBroadcastEvent implements BroadcastableEvent {
   constructor(public message: string) {}
   broadcastOn() { return ['public-channel', 'private-user.1'] }
   broadcastAs() { return 'TestBroadcastEvent' }
   broadcastWith() { return { text: this.message } }
+}
+
+class PusherEvent implements BroadcastableEvent {
+  constructor(public message: string, public socket?: string) {}
+  broadcastOn() { return [new Channel('public-chat'), new PrivateChannel('orders.1'), new EncryptedPrivateChannel('secrets.1')] }
+  broadcastAs() { return 'OrderUpdated' }
+  broadcastWith() { return { message: this.message } }
+  broadcastConnection() { return 'local' }
+  broadcastQueue() { return 'broadcasts' }
+}
+
+class BroadcastPost extends Model {
+  static table = 'broadcast_posts'
+  static broadcastsEvents = true
 }
 
 describe('Broadcasting & WebSockets', () => {
@@ -103,3 +123,140 @@ describe('Broadcasting & WebSockets', () => {
     expect(eventMsg.data).toEqual({ text: 'hello world' })
   })
 })
+
+describe('Broadcasting Parity', () => {
+  let root = ''
+  let app: Application
+  let kernel: HttpKernel
+
+  beforeEach(async () => {
+    await DB.close()
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'maxima-broadcasting-parity-'))
+    const src = path.join(root, 'src')
+    await fs.mkdir(path.join(src, 'routes'), { recursive: true })
+    await fs.writeFile(path.join(src, 'routes', 'web.ts'), '')
+    await fs.writeFile(path.join(src, 'routes', 'api.ts'), '')
+    await fs.writeFile(path.join(src, 'routes', 'channels.ts'), `import { Broadcast } from '@lib/broadcast/Broadcast.js'
+Broadcast.channel('orders.{id}', (user, id) => user?.id === Number(id))
+Broadcast.channel('private-orders.{id}', (user, id) => user?.id === Number(id))
+Broadcast.channel('private-encrypted-secrets.{id}', (user, id) => user?.id === Number(id))
+`)
+
+    app = new Application(src)
+    setApplication(app)
+    app.config.set('app.port', 0)
+    app.config.set('app.host', '127.0.0.1')
+    app.config.set('middleware.global', [])
+    app.config.set('broadcasting.middleware', [])
+    app.config.set('broadcasting.default', 'local')
+    app.config.set('broadcasting.connections.pusher.key', 'test-key')
+    app.config.set('broadcasting.connections.pusher.secret', 'test-secret')
+    app.config.set('security.helmet', false)
+    app.config.set('database.default', 'sqlite')
+    app.config.set('database.connections.sqlite', {
+      client: 'sqlite3',
+      connection: { filename: ':memory:' },
+      useNullAsDefault: true
+    })
+    Broadcast.restore()
+    kernel = new HttpKernel(app)
+    await kernel.listen()
+  })
+
+  afterEach(async () => {
+    await kernel.close()
+    await DB.close()
+    Broadcast.restore()
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  it('loads channel route files and signs Pusher/Reverb compatible auth responses', async () => {
+    await expect(Broadcast.authorize({ id: 1 }, 'private-orders.1')).resolves.toBe(true)
+    await expect(Broadcast.authorize({ id: 2 }, 'private-orders.1')).resolves.toBe(false)
+
+    const response = await kernel.server.inject({
+      method: 'POST',
+      url: '/broadcasting/auth',
+      payload: {
+        socket_id: '123.456',
+        channel_name: 'private-orders.1',
+        user: { id: 1, name: 'Ada' }
+      }
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ auth: expect.stringMatching(/^test-key:/) })
+  })
+
+  it('normalizes Pusher protocol subscriptions, encrypted channels, client events, and toOthers socket exclusion', async () => {
+    const port = (kernel.server.server.address() as any).port
+    const first = new WebSocket(`ws://127.0.0.1:${port}/app/test-key`)
+    const second = new WebSocket(`ws://127.0.0.1:${port}/app/test-key`)
+    const firstMessages: any[] = []
+    const secondMessages: any[] = []
+
+    first.on('message', data => firstMessages.push(JSON.parse(data.toString())))
+    second.on('message', data => secondMessages.push(JSON.parse(data.toString())))
+
+    await Promise.all([
+      new Promise<void>(resolve => first.on('open', resolve)),
+      new Promise<void>(resolve => second.on('open', resolve))
+    ])
+
+    await wait(100)
+    const firstSocket = JSON.parse(firstMessages.find(message => message.event === 'pusher:connection_established').data).socket_id
+
+    const subscribe = {
+      event: 'pusher:subscribe',
+      data: {
+        channel: 'private-encrypted-secrets.1',
+        auth: JSON.stringify({ id: 1 })
+      }
+    }
+    first.send(JSON.stringify(subscribe))
+    second.send(JSON.stringify(subscribe))
+    await wait(150)
+
+    await Broadcast.event(new PusherEvent('secret', firstSocket)).toOthers().dispatch()
+    first.send(JSON.stringify({
+      event: 'client-typing',
+      data: { channel: 'private-encrypted-secrets.1', data: { typing: true } }
+    }))
+    await wait(250)
+
+    first.close()
+    second.close()
+
+    expect(firstMessages.some(message => message.event === 'pusher_internal:subscription_succeeded')).toBe(true)
+    expect(secondMessages.some(message => message.event === 'OrderUpdated')).toBe(true)
+    expect(firstMessages.some(message => message.event === 'OrderUpdated')).toBe(false)
+    expect(secondMessages.some(message => message.event === 'client-typing')).toBe(true)
+  })
+
+  it('captures connection, queue, encryption, and model broadcasts', async () => {
+    Broadcast.fake()
+    const payload = await Broadcast.broadcast(new PusherEvent('captured'))
+
+    expect(payload).toMatchObject({
+      name: 'OrderUpdated',
+      channels: ['public-chat', 'private-orders.1', 'private-encrypted-secrets.1'],
+      encrypted: true,
+      connection: 'local',
+      queue: 'broadcasts'
+    })
+
+    await DB.connection().schema.createTable('broadcast_posts', table => {
+      table.increments('id')
+      table.string('title')
+      table.timestamp('created_at').nullable()
+      table.timestamp('updated_at').nullable()
+    })
+    await BroadcastPost.create({ title: 'Hello' })
+
+    expect(Broadcast.broadcasted().some(event => event.name === 'BroadcastPostCreated')).toBe(true)
+  })
+})
+
+function wait(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}

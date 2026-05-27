@@ -10,7 +10,7 @@ export class JsonResource {
         if (prop in target) {
           return Reflect.get(target, prop, receiver)
         }
-        if (target.resource && prop in target.resource) {
+        if (target.resource && typeof target.resource === 'object' && prop in target.resource) {
           const val = target.resource[prop]
           return typeof val === 'function' ? val.bind(target.resource) : val
         }
@@ -73,7 +73,7 @@ export class ResourceCollection extends JsonResource {
     }
 
     const data = this.toArray(req)
-    const wrap = (this.constructor as typeof JsonResource).wrap
+    const wrap = this.resourceClass.wrap
     const base = wrap ? { [wrap]: data } : data
 
     // Handle pagination

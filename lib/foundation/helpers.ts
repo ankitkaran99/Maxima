@@ -181,6 +181,18 @@ export function broadcast() {
   return import('@lib/broadcast/Broadcast.js').then(({ Broadcast }) => Broadcast)
 }
 
+export function http() {
+  return import('@lib/http/HttpClient.js').then(({ Http }) => Http)
+}
+
+export function processRunner() {
+  return import('@lib/process/Process.js').then(({ Process }) => Process)
+}
+
+export function context() {
+  return import('@lib/process/Context.js').then(({ Context }) => Context)
+}
+
 export function request<T = any>() {
   const context = requestStorage.getStore()
   if (!context) throw new Error('Request is unavailable outside of an active HTTP request.')
@@ -303,6 +315,9 @@ export function registerGlobalHelpers() {
     cache,
     event,
     broadcast,
+    http,
+    processRunner,
+    context,
     request,
     response,
     currentRoute,

@@ -1,5 +1,6 @@
 import knex, { type Knex } from 'knex'
 import { config } from '@lib/foundation/helpers.js'
+import { Telescope, Pulse } from '@lib/observability/Observability.js'
 
 type QueryListener = (query: { sql: string, bindings?: unknown[], connection: string }) => void
 type AfterCommitCallback = () => void | Promise<void>
@@ -105,6 +106,8 @@ export class DatabaseManager {
   private recordQuery(connection: string, query: any) {
     const entry = { sql: query.sql, bindings: query.bindings, connection }
     if (this.loggingQueries) this.queryLog.push(entry)
+    Telescope.record('query', entry)
+    Pulse.increment('queries')
     for (const listener of this.listeners) listener(entry)
   }
 

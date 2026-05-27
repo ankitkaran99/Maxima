@@ -1,0 +1,148 @@
+# Views And Templating
+
+Maxima renders Edge templates from `src/resources/views` and email templates from `src/resources/emails`. Views can be rendered through the `ViewFactory`, response helpers, or global helpers.
+
+```typescript
+import { view, viewExists, viewFirst } from '@lib/index.js';
+
+const html = await view('users.show', { title: 'Ada' });
+const exists = await viewExists('users.show');
+const first = await viewFirst(['users.card', 'users.show'], { title: 'Ada' });
+```
+
+Dot notation maps to nested files, so `users.show` resolves to `resources/views/users/show.edge`.
+
+## View Factory
+
+The `ViewFactory` can share global data, register creators, register composers, render inline templates, and render fragments.
+
+```typescript
+import { ViewFactory } from '@lib/view/ViewFactory.js';
+
+const views = new ViewFactory();
+
+views.share('appName', 'Maxima');
+views.creator('dashboard', data => {
+  data.created = true;
+});
+views.composer(['dashboard', 'users.*'], data => {
+  data.navigation = ['Home', 'Users'];
+});
+
+await views.render('dashboard');
+await views.renderInline('Hello {{ name }}', { name: 'Ada' });
+await views.renderFragment('dashboard', 'preview', { name: 'Ada' });
+```
+
+Creators run before composers. Patterns may be exact names, wildcard strings such as `users.*`, arrays, or regular expressions.
+
+## Layouts And Sections
+
+Templates support Laravel-style layout directives:
+
+```edge
+@extends('layouts/app')
+
+@section('content')
+  <h1>{{ title }}</h1>
+@endsection
+```
+
+Layouts can render sections with `@yield('content')`. `@parent`, `@show`, `@append`, `@overwrite`, `@hasSection`, and `@sectionMissing` are also compiled.
+
+## Blade-Style Directives
+
+Maxima preprocesses common Blade-style directives before handing templates to Edge:
+
+```edge
+@auth
+  Signed in
+@endauth
+
+@guest
+  Guest
+@endguest
+
+@can('update', post)
+  Edit
+@endcan
+
+@csrf
+@method('PUT')
+<input @checked(active) @required(required)>
+```
+
+Supported directives include `@auth`, `@guest`, `@can`, `@cannot`, `@canany`, `@isset`, `@empty`, `@production`, `@env`, `@session`, `@error`, `@csrf`, `@method`, `@checked`, `@selected`, `@disabled`, `@readonly`, and `@required`.
+
+## Loops And Control Flow
+
+Edge-native tags work alongside additional loop helpers:
+
+```edge
+@for(let i = 0; i < users.length; i++)
+  {{ users[i].name }}
+@endfor
+
+@for(const user of users)
+  @if(user.disabled)
+    @continue
+  @endif
+  {{ user.name }}
+@endfor
+
+@while(counter.value < 5)
+  @eval(counter.value++)
+  @break
+@endwhile
+```
+
+`@break` and `@continue` are available inside supported loops.
+
+## Localization And Output Helpers
+
+Templates can call translation and output helpers directly:
+
+```edge
+@lang('messages.welcome', { name: user.name })
+@choice('messages.apples', count)
+
+@json(payload)
+@js(payload)
+<span class="@class({ active: isActive, hidden: false })"></span>
+<span style="@style({ color: 'red', display: false })"></span>
+```
+
+`@json` and `@js` escape HTML-sensitive characters before rendering JSON.
+
+## Fragments
+
+Fragments can be rendered as part of a full view or independently:
+
+```edge
+@fragment('preview')
+  Preview {{ name }}
+@endfragment
+```
+
+```typescript
+const html = await renderFragment('users.card', 'preview', { name: 'Ada' });
+```
+
+## Emails
+
+Email templates live under `resources/emails` and are rendered through `renderEmail()` or `ViewFactory.renderEmail()`.
+
+```typescript
+import { renderEmail } from '@lib/index.js';
+
+const html = await renderEmail('welcome', { user: { name: 'Ada' } });
+```
+
+## View Cache
+
+Rendered templates are compiled into `storage/framework/views` and invalidated when the source file changes. You can warm or clear the cache through the CLI:
+
+```bash
+npm run maxima -- view:cache
+npm run maxima -- view:clear
+```

@@ -18,6 +18,10 @@ class UserResource extends JsonResource {
   }
 }
 
+class UnwrappedUserResource extends UserResource {
+  static wrap = ''
+}
+
 describe('API Resources', () => {
   it('formats single resource attributes and proxies model properties', () => {
     const user = new MockModel(1, 'Ada', 'ada@example.com')
@@ -82,5 +86,20 @@ describe('API Resources', () => {
       to: 30,
       total: 50
     })
+  })
+
+  it('uses the resource class wrapping setting for collections', () => {
+    const users = [
+      new MockModel(1, 'Ada', 'ada@example.com')
+    ]
+
+    expect(new UnwrappedUserResource(users[0]).resolve()).toEqual({
+      userId: 1,
+      userName: 'Ada',
+      userEmail: 'ada@example.com'
+    })
+    expect(UnwrappedUserResource.collection(users).resolve()).toEqual([
+      { userId: 1, userName: 'Ada', userEmail: 'ada@example.com' }
+    ])
   })
 })

@@ -9,34 +9,34 @@ import { SessionManager } from '@lib/session/Session.js'
 
 let app: Application
 
-beforeEach(() => {
-  app = new Application(process.cwd())
-  setApplication(app)
-  app.config.set('middleware.global', [])
-  app.config.set('middleware.aliases', {
-    session: SessionMiddleware
-  })
-  app.config.set('security.helmet', false)
-  app.config.set('session', {
-    driver: 'cookie',
-    lifetime: 120,
-    cookie: {
-      name: 'maxima_session',
-      httpOnly: true,
-      secure: false,
-      signed: true,
-      encrypted: true,
-      sameSite: 'lax',
-      path: '/'
-    }
-  })
-})
-
-afterEach(() => {
-  Route.clear()
-})
-
 describe('Session and Cookies', () => {
+  beforeEach(() => {
+    app = new Application(process.cwd())
+    setApplication(app)
+    app.config.set('middleware.global', [])
+    app.config.set('middleware.aliases', {
+      session: SessionMiddleware
+    })
+    app.config.set('security.helmet', false)
+    app.config.set('session', {
+      driver: 'cookie',
+      lifetime: 120,
+      cookie: {
+        name: 'maxima_session',
+        httpOnly: true,
+        secure: false,
+        signed: true,
+        encrypted: true,
+        sameSite: 'lax',
+        path: '/'
+      }
+    })
+  })
+
+  afterEach(() => {
+    Route.clear()
+  })
+
   it('persists flash data, old input, and error bags across requests', async () => {
     Route.get('/flash', request => {
       const session = request.session
@@ -143,5 +143,46 @@ describe('Session and Cookies', () => {
     const after = session.regenerate()
 
     expect(after).not.toBe(before)
+  })
+})
+
+describe('Session Helpers Parity', () => {
+  beforeEach(() => {
+    app = new Application(process.cwd())
+    setApplication(app)
+    app.config.set('cache', {
+      default: 'memory',
+      stores: {
+        memory: { driver: 'memory', prefix: 'parity_cache' }
+      }
+    })
+    app.config.set('session', {
+      driver: 'memory',
+      lifetime: 120,
+      cookie: { name: 'maxima_session', httpOnly: true, secure: false, sameSite: 'lax', path: '/' },
+      stores: { memory: {} }
+    })
+  })
+
+  it('supports session invalidation, previous URL, old input flashing, cache, and blocking helpers', async () => {
+    const manager = new SessionManager()
+    const request = { raw: { cookies: {} } }
+    const reply = { setCookie() {} }
+    const session = await manager.start(request, reply)
+
+    session.put('user_id', 10)
+    session.setPreviousUrl('/dashboard')
+    session.flashInput({ email: 'ada@example.com' })
+    expect(session.previousUrl()).toBe('/dashboard')
+    expect(session.oldInput()).toEqual({ email: 'ada@example.com' })
+
+    await session.cache().put('draft', { title: 'Hello' }, 60)
+    expect(await session.cache().get('draft')).toEqual({ title: 'Hello' })
+    await expect(session.block(1, () => 'locked')).resolves.toBe('locked')
+
+    const previousId = session.id()
+    const nextId = session.invalidate()
+    expect(nextId).not.toBe(previousId)
+    expect(session.all()).toEqual({})
   })
 })

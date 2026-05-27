@@ -1,13 +1,4 @@
 {
-  "entries": {
-    "file::auth:login:session:ada@example.com:local": {
-      "value": {
-        "count": 1,
-        "resetAt": 1779766297812
-      },
-      "tags": [],
-      "expiresAt": 1779766297812
-    }
-  },
+  "entries": {},
   "tagIndex": {}
 }

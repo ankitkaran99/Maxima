@@ -400,8 +400,12 @@ export class ViewFactory {
     const stat = await fs.stat(file)
     const cacheFile = path.join(this.compiledPath, `${crypto.createHash('sha1').update(file).digest('hex')}.edge`)
     if (fsSync.existsSync(cacheFile)) {
-      const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as { mtimeMs: number, compiled: string }
-      if (cached.mtimeMs >= stat.mtimeMs) return cached.compiled
+      try {
+        const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as { mtimeMs: number, compiled: string }
+        if (typeof cached.compiled === 'string' && cached.mtimeMs >= stat.mtimeMs) return cached.compiled
+      } catch {
+        // Recompile below when a cache file is stale, partial, or from an older format.
+      }
     }
     const contents = await this.applyLayout(await fs.readFile(file, 'utf8'), file)
     const compiled = this.compileDirectives(contents)

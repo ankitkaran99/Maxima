@@ -1,2 +1,38 @@
-<h1>Welcome, {{ user.name }}</h1>
-<p>Your Maxima account is ready.</p>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Welcome to Maxima</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f6f8fb;color:#18202b;font-family:Inter,Arial,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f8fb;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 18px;">
+                <img src="{{ env('APP_URL', 'http://127.0.0.1:3000') }}/assets/maxima.png" width="64" height="64" alt="Maxima" style="display:block;width:64px;height:64px;object-fit:contain;">
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 32px 32px;">
+                <p style="margin:0 0 10px;color:#0f766e;font-size:13px;font-weight:800;text-transform:uppercase;">Account ready</p>
+                <h1 style="margin:0;color:#111827;font-size:32px;line-height:1.18;letter-spacing:0;">Welcome, {{ user.name }}</h1>
+                <p style="margin:18px 0 0;color:#475569;font-size:16px;line-height:1.65;">Your Maxima account is ready. You can now build with routing, validation, ORM tools, queues, mail, notifications, storage, events, scheduling, and testing helpers.</p>
+                <p style="margin:26px 0 0;">
+                  <a href="{{ env('APP_URL', 'http://127.0.0.1:3000') }}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#0f766e;color:#ffffff;font-size:15px;font-weight:800;text-decoration:none;">Open Maxima</a>
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:18px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:13px;line-height:1.5;">
+                Laravel-style developer experience on Fastify.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

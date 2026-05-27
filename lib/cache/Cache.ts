@@ -6,6 +6,7 @@ import redis from 'redis'
 import { promisify } from 'node:util'
 import { DB } from '@lib/database/DB.js'
 import { Event } from '@lib/events/Event.js'
+import { Telescope, Pulse } from '@lib/observability/Observability.js'
 
 type CacheValue = any
 type InvalidatedReason = 'expired' | 'forgot' | 'flushed'
@@ -33,14 +34,21 @@ export class KeyForgotten {
 export class CacheCleared {}
 
 export interface CacheStore {
-  get<T = any>(key: string): T | undefined | Promise<T | undefined>
+  get<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): T | undefined | Promise<T | undefined>
   put(key: string, value: any, ttlSeconds?: number): void | Promise<void>
   forever(key: string, value: any): void | Promise<void>
   forget(key: string): void | Promise<void>
   flush(): void | Promise<void>
   has(key: string): boolean | Promise<boolean>
+  missing(key: string): boolean | Promise<boolean>
+  add(key: string, value: any, ttlSeconds?: number): boolean | Promise<boolean>
+  pull<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): T | undefined | Promise<T | undefined>
+  sear<T>(key: string, callback: () => T | Promise<T>): T | Promise<T>
+  flexible<T>(key: string, ttls: [number, number], callback: () => T | Promise<T>): T | Promise<T>
   many(keys: string[]): Record<string, any> | Promise<Record<string, any>>
   putMany(values: Record<string, any>, ttlSeconds?: number): void | Promise<void>
+  getMultiple(keys: Iterable<string>): Record<string, any> | Promise<Record<string, any>>
+  setMultiple(values: Iterable<[string, any]> | Record<string, any>, ttlSeconds?: number): void | Promise<void>
   increment(key: string, amount?: number): number | Promise<number>
   decrement(key: string, amount?: number): number | Promise<number>
   remember<T>(key: string, ttlSeconds: number, callback: () => T | Promise<T>): T | Promise<T>
@@ -53,10 +61,12 @@ export interface CacheStore {
   rawPut(rawKey: string, value: any, ttlSeconds?: number, tags?: string[]): void | Promise<void>
   rawForget(rawKey: string): void | Promise<void>
   rawHas(rawKey: string): boolean | Promise<boolean>
+  supportsTags(): boolean
   
   acquireLock(name: string, seconds: number, owner: string): Promise<boolean>
   releaseLock(name: string, owner: string): Promise<boolean>
   forceReleaseLock(name: string): Promise<void>
+  prune(): number | Promise<number>
 }
 
 abstract class BaseCacheStore implements CacheStore {
@@ -68,14 +78,18 @@ abstract class BaseCacheStore implements CacheStore {
     protected readonly options: Record<string, any> = {}
   ) {}
 
-  get<T = any>(key: string) {
+  get<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)) {
     const entry = this.peek(this.rawKey(key))
     if (entry) {
       Event.dispatch(new CacheHit(key, entry.value))
+      Telescope.record('cache', { key, hit: true, store: this.name })
+      Pulse.increment('cache.hit')
       return clone(entry.value) as T
     }
     Event.dispatch(new CacheMiss(key))
-    return undefined
+    Telescope.record('cache', { key, hit: false, store: this.name })
+    Pulse.increment('cache.miss')
+    return resolveDefault(defaultValue)
   }
 
   rawGet<T = any>(rawKey: string) {
@@ -91,6 +105,7 @@ abstract class BaseCacheStore implements CacheStore {
   put(key: string, value: any, ttlSeconds?: number) {
     this.writeEntry(this.rawKey(key), value, ttlSeconds)
     Event.dispatch(new KeyWritten(key, value, ttlSeconds))
+    Telescope.record('cache', { key, write: true, store: this.name, ttlSeconds })
   }
 
   rawPut(rawKey: string, value: any, ttlSeconds?: number, tags: string[] = []) {
@@ -105,6 +120,7 @@ abstract class BaseCacheStore implements CacheStore {
   forget(key: string) {
     this.deleteEntry(this.rawKey(key), 'forgot')
     Event.dispatch(new KeyForgotten(key))
+    Telescope.record('cache', { key, forgotten: true, store: this.name })
   }
 
   rawForget(rawKey: string) {
@@ -127,12 +143,60 @@ abstract class BaseCacheStore implements CacheStore {
     return this.rawGet(rawKey) !== undefined
   }
 
+  missing(key: string) {
+    return !this.has(key)
+  }
+
+  add(key: string, value: any, ttlSeconds?: number) {
+    if (this.has(key)) return false
+    this.put(key, value, ttlSeconds)
+    return true
+  }
+
+  pull<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)) {
+    const value = this.get<T>(key, defaultValue)
+    this.forget(key)
+    return value
+  }
+
+  sear<T>(key: string, callback: () => T | Promise<T>) {
+    return this.rememberForever(key, callback)
+  }
+
+  async flexible<T>(key: string, ttls: [number, number], callback: () => T | Promise<T>) {
+    const rawKey = this.rawKey(key)
+    const entry = this.state.entries[rawKey]
+    const now = Date.now()
+    if (entry?.value && typeof entry.value === 'object' && '__flexible' in entry.value) {
+      const payload = entry.value as { value: T, freshUntil: number, staleUntil: number }
+      if (payload.freshUntil > now || payload.staleUntil > now) return clone(payload.value)
+    }
+    const value = await Promise.resolve(callback())
+    const [freshSeconds, staleSeconds] = ttls
+    this.writeEntry(rawKey, {
+      __flexible: true,
+      value,
+      freshUntil: now + freshSeconds * 1000,
+      staleUntil: now + staleSeconds * 1000
+    }, staleSeconds)
+    Event.dispatch(new KeyWritten(key, value, staleSeconds))
+    return value
+  }
+
   many(keys: string[]) {
     return Object.fromEntries(keys.map(key => [key, this.get(key)]))
   }
 
   putMany(values: Record<string, any>, ttlSeconds?: number) {
     for (const [key, value] of Object.entries(values)) this.put(key, value, ttlSeconds)
+  }
+
+  getMultiple(keys: Iterable<string>) {
+    return this.many([...keys])
+  }
+
+  setMultiple(values: Iterable<[string, any]> | Record<string, any>, ttlSeconds?: number) {
+    this.putMany(iterableToRecord(values), ttlSeconds)
   }
 
   increment(key: string, amount = 1) {
@@ -165,7 +229,7 @@ abstract class BaseCacheStore implements CacheStore {
     return new TaggedCache(this, tags)
   }
 
-  lock(name: string, seconds = 10, owner = randomUUID()) {
+  lock(name: string, seconds = 10, owner: string = randomUUID()) {
     return new CacheLock(this, name, seconds, owner)
   }
 
@@ -205,6 +269,22 @@ abstract class BaseCacheStore implements CacheStore {
 
   count() {
     return Object.keys(this.state.entries).length
+  }
+
+  supportsTags() {
+    return true
+  }
+
+  prune() {
+    let pruned = 0
+    for (const key of Object.keys(this.state.entries)) {
+      const entry = this.state.entries[key]
+      if (entry.expiresAt && entry.expiresAt <= Date.now()) {
+        this.deleteEntry(key, 'expired')
+        pruned += 1
+      }
+    }
+    return pruned
   }
 
   taggedKey(key: string, tags: string[]) {
@@ -274,6 +354,33 @@ class MemoryCacheStore extends BaseCacheStore {
   protected persist() {}
 }
 
+class NullCacheStore extends BaseCacheStore {
+  override get<T = any>(_key: string, defaultValue?: T | (() => T | Promise<T>)) {
+    return resolveDefault(defaultValue)
+  }
+
+  override rawGet<T = any>(_rawKey: string) {
+    return undefined as T | undefined
+  }
+
+  override put() {}
+  override rawPut() {}
+  override forever() {}
+  override forget() {}
+  override rawForget() {}
+  override flush() {}
+  override has() { return false }
+  override rawHas() { return false }
+  override missing() { return true }
+  override add() { return true }
+  override increment(_key: string, amount = 1) { return amount }
+  override decrement(_key: string, amount = 1) { return -amount }
+  override peek() { return undefined }
+  override count() { return 0 }
+  override supportsTags() { return false }
+  protected persist() {}
+}
+
 class FileCacheStore extends BaseCacheStore {
   private readonly file: string
 
@@ -337,12 +444,16 @@ class RedisCacheStore implements CacheStore {
     return `${this.prefix()}:${key}`
   }
 
-  async get<T = any>(key: string): Promise<T | undefined> {
+  taggedKey(key: string, tags: string[]) {
+    return `${normalizeTags(tags)}:${key}`
+  }
+
+  async get<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): Promise<T | undefined> {
     this.connect()
     const val = await this.getAsync(this.rawKey(key))
     if (val === null || val === undefined) {
       Event.dispatch(new CacheMiss(key))
-      return undefined
+      return resolveDefault(defaultValue)
     }
     let parsed: any
     try {
@@ -393,6 +504,30 @@ class RedisCacheStore implements CacheStore {
     return res === 1
   }
 
+  async missing(key: string): Promise<boolean> {
+    return !(await this.has(key))
+  }
+
+  async add(key: string, value: any, ttlSeconds?: number): Promise<boolean> {
+    if (await this.has(key)) return false
+    await this.put(key, value, ttlSeconds)
+    return true
+  }
+
+  async pull<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): Promise<T | undefined> {
+    const value = await this.get<T>(key, defaultValue)
+    await this.forget(key)
+    return value
+  }
+
+  async sear<T>(key: string, callback: () => T | Promise<T>): Promise<T> {
+    return this.rememberForever(key, callback)
+  }
+
+  async flexible<T>(key: string, ttls: [number, number], callback: () => T | Promise<T>): Promise<T> {
+    return this.remember(key, ttls[1], callback)
+  }
+
   async many(keys: string[]): Promise<Record<string, any>> {
     const pairs = await Promise.all(keys.map(async key => [key, await this.get(key)]))
     return Object.fromEntries(pairs)
@@ -400,6 +535,14 @@ class RedisCacheStore implements CacheStore {
 
   async putMany(values: Record<string, any>, ttlSeconds?: number): Promise<void> {
     await Promise.all(Object.entries(values).map(([key, value]) => this.put(key, value, ttlSeconds)))
+  }
+
+  async getMultiple(keys: Iterable<string>): Promise<Record<string, any>> {
+    return this.many([...keys])
+  }
+
+  async setMultiple(values: Iterable<[string, any]> | Record<string, any>, ttlSeconds?: number): Promise<void> {
+    return this.putMany(iterableToRecord(values), ttlSeconds)
   }
 
   async increment(key: string, amount = 1): Promise<number> {
@@ -433,7 +576,7 @@ class RedisCacheStore implements CacheStore {
     return new TaggedCache(this as any, tags)
   }
 
-  lock(name: string, seconds = 10, owner = randomUUID()): CacheLock {
+  lock(name: string, seconds = 10, owner: string = randomUUID()): CacheLock {
     return new CacheLock(this as any, name, seconds, owner)
   }
 
@@ -471,9 +614,13 @@ class RedisCacheStore implements CacheStore {
   rawPut(rawKey: string, value: any, ttlSeconds?: number, tags?: string[]): void {}
   rawForget(rawKey: string): void {}
   rawHas(rawKey: string): boolean { return false }
+  supportsTags(): boolean { return false }
+  prune(): number { return 0 }
 }
 
 export class DatabaseCacheStore implements CacheStore {
+  private tagIndex = new Map<string, Set<string>>()
+
   constructor(
     protected readonly name: string,
     protected readonly manager: CacheManager,
@@ -492,18 +639,22 @@ export class DatabaseCacheStore implements CacheStore {
     return `${this.prefix()}:${key}`
   }
 
-  async get<T = any>(key: string): Promise<T | undefined> {
+  taggedKey(key: string, tags: string[]) {
+    return `${normalizeTags(tags)}:${key}`
+  }
+
+  async get<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): Promise<T | undefined> {
     const table = this.getTable()
     const rKey = this.rawKey(key)
     const row = await DB.table(table).where('key', rKey).first()
     if (!row) {
       Event.dispatch(new CacheMiss(key))
-      return undefined
+      return resolveDefault(defaultValue)
     }
     if (row.expiration && row.expiration <= Math.floor(Date.now() / 1000)) {
       await DB.table(table).where('key', rKey).delete()
       Event.dispatch(new CacheMiss(key))
-      return undefined
+      return resolveDefault(defaultValue)
     }
     
     let parsed: any
@@ -560,6 +711,30 @@ export class DatabaseCacheStore implements CacheStore {
     return val !== undefined
   }
 
+  async missing(key: string): Promise<boolean> {
+    return !(await this.has(key))
+  }
+
+  async add(key: string, value: any, ttlSeconds?: number): Promise<boolean> {
+    if (await this.has(key)) return false
+    await this.put(key, value, ttlSeconds)
+    return true
+  }
+
+  async pull<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): Promise<T | undefined> {
+    const value = await this.get<T>(key, defaultValue)
+    await this.forget(key)
+    return value
+  }
+
+  async sear<T>(key: string, callback: () => T | Promise<T>): Promise<T> {
+    return this.rememberForever(key, callback)
+  }
+
+  async flexible<T>(key: string, ttls: [number, number], callback: () => T | Promise<T>): Promise<T> {
+    return this.remember(key, ttls[1], callback)
+  }
+
   async many(keys: string[]): Promise<Record<string, any>> {
     const pairs = await Promise.all(keys.map(async key => [key, await this.get(key)]))
     return Object.fromEntries(pairs)
@@ -567,6 +742,14 @@ export class DatabaseCacheStore implements CacheStore {
 
   async putMany(values: Record<string, any>, ttlSeconds?: number): Promise<void> {
     await Promise.all(Object.entries(values).map(([key, value]) => this.put(key, value, ttlSeconds)))
+  }
+
+  async getMultiple(keys: Iterable<string>): Promise<Record<string, any>> {
+    return this.many([...keys])
+  }
+
+  async setMultiple(values: Iterable<[string, any]> | Record<string, any>, ttlSeconds?: number): Promise<void> {
+    return this.putMany(iterableToRecord(values), ttlSeconds)
   }
 
   async increment(key: string, amount = 1): Promise<number> {
@@ -597,10 +780,10 @@ export class DatabaseCacheStore implements CacheStore {
   }
 
   tags(...tags: string[]): TaggedCache {
-    throw new Error('Database cache driver does not support tagging.')
+    return new TaggedCache(this, tags)
   }
 
-  lock(name: string, seconds = 10, owner = randomUUID()): CacheLock {
+  lock(name: string, seconds = 10, owner: string = randomUUID()): CacheLock {
     return new CacheLock(this as any, name, seconds, owner)
   }
 
@@ -646,21 +829,44 @@ export class DatabaseCacheStore implements CacheStore {
 
   peek(key: string): CacheEntry | undefined { return undefined }
   count(): number { return 0 }
-  rawGet<T = any>(rawKey: string): T | undefined { return undefined }
-  rawPut(rawKey: string, value: any, ttlSeconds?: number, tags?: string[]): void {}
-  rawForget(rawKey: string): void {}
-  rawHas(rawKey: string): boolean { return false }
+  async rawGet<T = any>(rawKey: string): Promise<T | undefined> { return this.get(rawKey) }
+  async rawPut(rawKey: string, value: any, ttlSeconds?: number, tags: string[] = []): Promise<void> {
+    await this.put(rawKey, value, ttlSeconds)
+    for (const tag of tags.map(normalizeKey).filter(Boolean)) {
+      const bucket = this.tagIndex.get(tag) ?? new Set<string>()
+      bucket.add(rawKey)
+      this.tagIndex.set(tag, bucket)
+    }
+  }
+  async rawForget(rawKey: string): Promise<void> {
+    await this.forget(rawKey)
+    for (const bucket of this.tagIndex.values()) bucket.delete(rawKey)
+  }
+  async rawHas(rawKey: string): Promise<boolean> { return this.has(rawKey) }
+  supportsTags(): boolean { return true }
+  async flushTags(tags: string[]) {
+    const keys = new Set<string>()
+    for (const tag of tags.map(normalizeKey).filter(Boolean)) {
+      for (const key of this.tagIndex.get(tag) ?? []) keys.add(key)
+    }
+    for (const key of keys) await this.rawForget(key)
+  }
+  async prune(): Promise<number> {
+    const table = this.getTable()
+    const deleted = await DB.table(table).where('expiration', '<=', Math.floor(Date.now() / 1000)).delete().catch(() => 0)
+    return Number(deleted ?? 0)
+  }
 }
 
 export class TaggedCache {
-  constructor(private readonly store: BaseCacheStore, private readonly tagsList: string[]) {}
+  constructor(private readonly store: CacheStore, private readonly tagsList: string[]) {}
 
   get<T = any>(key: string) {
-    return this.store.rawGet<T>(this.store.taggedKey(key, this.tagsList))
+    return this.store.rawGet<T>((this.store as any).taggedKey(key, this.tagsList))
   }
 
   put(key: string, value: any, ttlSeconds?: number) {
-    this.store.rawPut(this.store.taggedKey(key, this.tagsList), value, ttlSeconds, this.tagsList)
+    this.store.rawPut((this.store as any).taggedKey(key, this.tagsList), value, ttlSeconds, this.tagsList)
   }
 
   forever(key: string, value: any) {
@@ -668,11 +874,12 @@ export class TaggedCache {
   }
 
   forget(key: string) {
-    this.store.rawForget(this.store.taggedKey(key, this.tagsList))
+    this.store.rawForget((this.store as any).taggedKey(key, this.tagsList))
   }
 
   flush() {
-    this.store.flushTagged(this.tagsList)
+    if (typeof (this.store as any).flushTagged === 'function') return (this.store as any).flushTagged(this.tagsList)
+    throw new Error('This cache store does not support tag flushing.')
   }
 
   has(key: string) {
@@ -680,14 +887,14 @@ export class TaggedCache {
   }
 
   remember<T>(key: string, ttlSeconds: number, callback: () => T | Promise<T>) {
-    return this.store.remember(this.store.taggedKey(key, this.tagsList), ttlSeconds, callback)
+    return this.store.remember((this.store as any).taggedKey(key, this.tagsList), ttlSeconds, callback)
   }
 
   rememberForever<T>(key: string, callback: () => T | Promise<T>) {
-    return this.store.rememberForever(this.store.taggedKey(key, this.tagsList), callback)
+    return this.store.rememberForever((this.store as any).taggedKey(key, this.tagsList), callback)
   }
 
-  lock(name: string, seconds = 10, owner = randomUUID()) {
+  lock(name: string, seconds = 10, owner: string = randomUUID()) {
     return this.store.lock(name, seconds, owner)
   }
 }
@@ -725,6 +932,10 @@ export class CacheLock {
 
   async forceRelease() {
     await this.store.forceReleaseLock(this.name)
+  }
+
+  ownerToken() {
+    return this.owner
   }
 }
 
@@ -797,8 +1008,44 @@ export class CacheManager {
     return this.store().tags(...tags)
   }
 
-  lock(name: string, seconds = 10, owner = randomUUID()) {
+  lock(name: string, seconds = 10, owner: string = randomUUID()) {
     return this.store().lock(name, seconds, owner)
+  }
+
+  restoreLock(name: string, owner: string) {
+    return this.lock(name, 0, owner)
+  }
+
+  async add(key: string, value: any, ttlSeconds?: number) {
+    return this.store().add(key, value, ttlSeconds)
+  }
+
+  async pull<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)) {
+    return this.store().pull<T>(key, defaultValue)
+  }
+
+  async sear<T>(key: string, callback: () => T | Promise<T>) {
+    return this.store().sear(key, callback)
+  }
+
+  async flexible<T>(key: string, ttls: [number, number], callback: () => T | Promise<T>) {
+    return this.store().flexible(key, ttls, callback)
+  }
+
+  async missing(key: string) {
+    return this.store().missing(key)
+  }
+
+  async getMultiple(keys: Iterable<string>) {
+    return this.store().getMultiple(keys)
+  }
+
+  async setMultiple(values: Iterable<[string, any]> | Record<string, any>, ttlSeconds?: number) {
+    return this.store().setMultiple(values, ttlSeconds)
+  }
+
+  async prune() {
+    return this.store().prune()
   }
 
   assertHas(key: string, expected?: any) {
@@ -825,6 +1072,10 @@ export class CacheManager {
     const store = this.storeConfig(name)
     if (this.drivers.has(store.driver)) return this.drivers.get(store.driver)!(store, name, this)
     if (store.driver === 'memory') return new MemoryCacheStore(name, this, store)
+    if (store.driver === 'array') return new MemoryCacheStore(name, this, store)
+    if (store.driver === 'null') return new NullCacheStore(name, this, store)
+    if (store.driver === 'memcached' || store.driver === 'dynamodb') return new MemoryCacheStore(name, this, store)
+    if (store.driver === 'memo') return new MemoryCacheStore(name, this, store)
     if (store.driver === 'file' || store.driver === 'local') return new FileCacheStore(name, this, store)
     if (store.driver === 'redis') return new RedisCacheStore(name, this, store)
     if (store.driver === 'database') return new DatabaseCacheStore(name, this, store)
@@ -861,6 +1112,15 @@ function normalizeTags(tags: string[]) {
 function clone<T>(value: T): T {
   if (value === undefined || value === null) return value
   return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value))
+}
+
+function resolveDefault<T>(defaultValue?: T | (() => T | Promise<T>)) {
+  return typeof defaultValue === 'function' ? (defaultValue as () => T | Promise<T>)() : defaultValue
+}
+
+function iterableToRecord(values: Iterable<[string, any]> | Record<string, any>) {
+  if (Symbol.iterator in Object(values)) return Object.fromEntries(values as Iterable<[string, any]>)
+  return values as Record<string, any>
 }
 
 function deepEqual(a: any, b: any) {

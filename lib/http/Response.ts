@@ -93,6 +93,20 @@ export class Response {
     return this.fileResponse(filePath, name, 'attachment', headers)
   }
 
+  async storage(path: string, disk?: string, name = path.split(/[\\/]/).pop() ?? 'file', headers: Record<string, string | number | boolean> = {}) {
+    const { Storage } = await import('@lib/storage/Storage.js')
+    const response = await Storage.disk(disk).response(path, name, headers)
+    applyHeaders(this.reply, response.headers)
+    return this.reply.code(response.statusCode).send(response.body)
+  }
+
+  async storageDownload(path: string, disk?: string, name = path.split(/[\\/]/).pop() ?? 'file', headers: Record<string, string | number | boolean> = {}) {
+    const { Storage } = await import('@lib/storage/Storage.js')
+    const response = await Storage.disk(disk).download(path, name, headers)
+    applyHeaders(this.reply, response.headers)
+    return this.reply.code(response.statusCode).send(response.body)
+  }
+
   cookie(name: string, value: unknown, options: Record<string, any> = {}) {
     const sessionCookie = config<Record<string, any>>('session.cookie', {})
     const payload = encodeCookie(value, { signed: options.signed ?? sessionCookie.signed, encrypted: options.encrypted ?? sessionCookie.encrypted })

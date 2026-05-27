@@ -6,6 +6,7 @@ import { SerializableModelRegistry } from '@lib/database/SerializableModelRegist
 import { Cache } from '@lib/cache/Cache.js'
 import { Crypt } from '@lib/security/Crypt.js'
 import { promisify } from 'node:util'
+import { Telescope, Pulse } from '@lib/observability/Observability.js'
 
 export interface Job { handle(): Promise<void> | void }
 
@@ -424,10 +425,12 @@ export class QueueManager {
 
     if (this.pushed) {
       const jobName = job.constructor.name
-      if (jobName === 'SendQueuedMailJob' || jobName === 'SendQueuedNotificationJob') {
+      if (jobName === 'SendQueuedMailJob' || jobName === 'SendQueuedNotificationJob' || jobName === 'QueuedClosure') {
         this.pushed.push({ queue, job: 'Object', options })
       }
       this.pushed.push({ queue, job: jobName, options })
+      Telescope.record('job', { queue, job: jobName, options, queued: true })
+      Pulse.increment('jobs.queued')
       return { queued: true, queue, job: jobName, options }
     }
 
@@ -529,6 +532,8 @@ export class QueueManager {
       await runPipeline(0)
 
       await this.fireAfter(connection, job, { class: jobName, properties: serializeValue(job), tags: this.jobTags(job) })
+      Telescope.record('job', { connection, queue: queueName, job: jobName, completed: true, durationMs: Math.round(performance.now() - start) })
+      Pulse.increment('jobs.completed')
 
       if (metadata.batchId) {
         await this.decrementPendingBatch(metadata.batchId, true)
@@ -546,6 +551,8 @@ export class QueueManager {
         try { await (job as any).failed(error) } catch (failedError) { Log.error(failedError as Error) }
       }
       await this.fireFailing(connection, job, { class: jobName, properties: serializeValue(job), tags: this.jobTags(job) }, error as Error)
+      Telescope.record('job', { connection, queue: queueName, job: jobName, failed: true, error: (error as Error).message })
+      Pulse.increment('jobs.failed')
       
       if (metadata.batchId) {
         await this.recordBatchFailure(metadata.batchId, String(metadata.jobId ?? 'unknown'), error as Error)

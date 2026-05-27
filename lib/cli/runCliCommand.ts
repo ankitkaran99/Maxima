@@ -3,6 +3,9 @@ import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { randomBytes as cryptoRandom } from 'node:crypto'
 import { Application } from '@lib/foundation/Application.js'
 import { setApplication, basePath, storagePath } from '@lib/foundation/helpers.js'
 import { HttpKernel } from '@lib/http/Kernel.js'
@@ -11,32 +14,78 @@ import { Queue } from '@lib/queue/Queue.js'
 import { Schedule } from '@lib/scheduler/Schedule.js'
 import { Route } from '@lib/http/Route.js'
 
+const execFileAsync = promisify(execFile)
+
 export async function runCliCommand(argv = process.argv.slice(2)) {
   const program = new Command('maxima')
   program.description('Maxima framework CLI').version('0.1.0')
+  program.showHelpAfterError()
+
+  program.command('about').action(async () => {
+    const app = await bootstrap()
+    console.table([
+      { key: 'Version', value: '0.1.0' },
+      { key: 'Environment', value: app.config.get('app.env', process.env.NODE_ENV ?? 'local') },
+      { key: 'Base path', value: projectRoot() },
+      { key: 'Node', value: process.version }
+    ])
+  })
+
+  program.command('inspire').action(() => {
+    const quotes = [
+      'Simplicity is the ultimate sophistication.',
+      'Programs must be written for people to read.',
+      'Make it work, make it right, make it fast.'
+    ]
+    console.log(quotes[Math.floor(Math.random() * quotes.length)])
+  })
+
+  program.command('env').action(async () => {
+    const app = await bootstrap()
+    console.log(app.config.get('app.env', process.env.NODE_ENV ?? 'local'))
+  })
+
+  program.command('key:generate').option('--show').option('--force').action(async options => {
+    const key = `base64:${Buffer.from(cryptoRandom(32)).toString('base64')}`
+    if (options.show) {
+      console.log(key)
+      return
+    }
+    await updateEnvValue('APP_KEY', key)
+    console.log('INFO  Application key set successfully')
+  })
 
   program.command('serve').option('-p, --port <port>').action(async options => {
     const app = await bootstrap()
     await new HttpKernel(app).listen(Number(options.port ?? app.config.get('app.port', 3000)))
   })
 
-  program.command('make:controller <name>').action(name => makeFile(`app/Http/Controllers/${name}.ts`, controllerStub(name)))
-  program.command('make:model <name>').action(name => makeFile(`app/Models/${name}.ts`, modelStub(name)))
-  program.command('make:middleware <name>').action(name => makeFile(`app/Http/Middleware/${name}.ts`, middlewareStub(name)))
-  program.command('make:request <name>').action(name => makeFile(`app/Http/Requests/${name}.ts`, requestStub(name)))
-  program.command('make:notification <name>').action(name => makeFile(`app/Notifications/${name}.ts`, notificationStub(name)))
-  program.command('make:mail <name>').action(name => makeFile(`app/Mail/${name}.ts`, mailStub(name)))
-  program.command('make:job <name>').action(name => makeFile(`app/Console/Jobs/${name}.ts`, jobStub(name)))
-  program.command('make:migration <name>').action(name => makeFile(`database/migrations/${Date.now()}_${name}.ts`, migrationStub()))
-  program.command('make:policy <name>').action(name => makeFile(`app/Policies/${name}.ts`, policyStub(name)))
-  program.command('make:event <name>').action(name => makeFile(`app/Events/${name}.ts`, eventStub(name)))
-  program.command('make:listener <name>').action(name => makeFile(`app/Listeners/${name}.ts`, listenerStub(name)))
-  program.command('make:resource <name>').action(name => makeFile(`app/Http/Resources/${name}.ts`, resourceStub(name)))
-  program.command('make:cast <name>').action(name => makeFile(`app/Casts/${name}.ts`, castStub(name)))
-  program.command('make:command <name>').action(name => makeFile(`app/Console/Commands/${name}.ts`, commandStub(name)))
-  program.command('make:rule <name>').action(name => makeFile(`app/Rules/${name}.ts`, ruleStub(name)))
-  program.command('make:seeder <name>').action(name => makeFile(`database/seeders/${name}.ts`, seederStub()))
-  program.command('make:factory <name>').action(name => makeFile(`database/factories/${name}.ts`, factoryStub(name)))
+  registerGenerator(program, 'make:controller <name>', 'controller', name => `app/Http/Controllers/${name}.ts`, controllerStub)
+  registerGenerator(program, 'make:model <name>', 'model', name => `app/Models/${name}.ts`, modelStub)
+  registerGenerator(program, 'make:middleware <name>', 'middleware', name => `app/Http/Middleware/${name}.ts`, middlewareStub)
+  registerGenerator(program, 'make:request <name>', 'request', name => `app/Http/Requests/${name}.ts`, requestStub)
+  registerGenerator(program, 'make:notification <name>', 'notification', name => `app/Notifications/${name}.ts`, notificationStub)
+  registerGenerator(program, 'make:mail <name>', 'mail', name => `app/Mail/${name}.ts`, mailStub)
+  registerGenerator(program, 'make:job <name>', 'job', name => `app/Console/Jobs/${name}.ts`, jobStub)
+  registerGenerator(program, 'make:migration <name>', 'migration', name => `database/migrations/${Date.now()}_${name}.ts`, () => migrationStub())
+  registerGenerator(program, 'make:policy <name>', 'policy', name => `app/Policies/${name}.ts`, policyStub)
+  registerGenerator(program, 'make:event <name>', 'event', name => `app/Events/${name}.ts`, eventStub)
+  registerGenerator(program, 'make:listener <name>', 'listener', name => `app/Listeners/${name}.ts`, listenerStub)
+  registerGenerator(program, 'make:resource <name>', 'resource', name => `app/Http/Resources/${name}.ts`, resourceStub)
+  registerGenerator(program, 'make:cast <name>', 'cast', name => `app/Casts/${name}.ts`, castStub)
+  registerGenerator(program, 'make:command <name>', 'command', name => `app/Console/Commands/${name}.ts`, commandStub)
+  registerGenerator(program, 'make:channel <name>', 'channel', name => `app/Broadcasting/${name}.ts`, channelStub)
+  registerGenerator(program, 'make:rule <name>', 'rule', name => `app/Rules/${name}.ts`, ruleStub)
+  registerGenerator(program, 'make:seeder <name>', 'seeder', name => `database/seeders/${name}.ts`, () => seederStub())
+  registerGenerator(program, 'make:factory <name>', 'factory', name => `database/factories/${name}.ts`, factoryStub)
+  registerGenerator(program, 'make:component <name>', 'component', name => `app/View/Components/${name}.ts`, componentStub)
+  registerGenerator(program, 'make:enum <name>', 'enum', name => `app/Enums/${name}.ts`, enumStub)
+  registerGenerator(program, 'make:exception <name>', 'exception', name => `app/Exceptions/${name}.ts`, exceptionStub)
+  registerGenerator(program, 'make:interface <name>', 'interface', name => `app/Contracts/${name}.ts`, interfaceStub)
+  registerGenerator(program, 'make:observer <name>', 'observer', name => `app/Observers/${name}.ts`, observerStub)
+  registerGenerator(program, 'make:provider <name>', 'provider', name => `app/Providers/${name}.ts`, providerStub)
+  registerGenerator(program, 'make:test <name>', 'test', name => `../tests/${name}.test.ts`, testStub)
+  registerGenerator(program, 'make:trait <name>', 'trait', name => `app/Support/${name}.ts`, traitStub)
 
   program.command('migrate').option('--path <path>').action(async options => { await bootstrap(); await DB.connection().migrate.latest(migrationOptions(options)); console.log('INFO  Migrations complete') })
   program.command('migrate:rollback').option('--path <path>').option('--step <step>').action(async options => { await bootstrap(); await DB.connection().migrate.rollback(migrationOptions(options), false); console.log('INFO  Rollback complete') })
@@ -61,11 +110,12 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
   program.command('schema:dump').option('--path <path>').action(async options => {
     await bootstrap()
     const target = options.path ?? 'schema.sql'
-    await fs.writeFile(path.join(projectRoot(), target), '')
+    await fs.writeFile(path.join(projectRoot(), target), `-- Maxima schema dump\n-- Generated: ${new Date().toISOString()}\n`)
     console.log(`INFO  Schema dumped to ${target}`)
   })
   program.command('cache:table').action(async () => { await bootstrap(); const { Schema } = await import('@lib/database/Schema.js'); await Schema.createCacheTable(); console.log('INFO  Cache table created') })
   program.command('session:table').action(async () => { await bootstrap(); const { Schema } = await import('@lib/database/Schema.js'); await Schema.createSessionTable(); console.log('INFO  Session table created') })
+  program.command('notification:table').action(async () => { await bootstrap(); const { Schema } = await import('@lib/database/Schema.js'); await Schema.createNotificationsTable(); console.log('INFO  Notifications table created') })
   program.command('queue:table').action(async () => { await bootstrap(); const { Schema } = await import('@lib/database/Schema.js'); await Schema.createQueueTables(); console.log('INFO  Queue tables created') })
   program.command('db:seed')
     .option('--class <className>')
@@ -120,11 +170,127 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
       console.log('INFO  Queue worker started')
     })
 
+  program.command('horizon:status').action(async () => {
+    await bootstrap()
+    const { Horizon } = await import('@lib/observability/Observability.js')
+    console.table([Horizon.snapshot()])
+  })
+
+  program.command('pulse:show').action(async () => {
+    await bootstrap()
+    const { Pulse } = await import('@lib/observability/Observability.js')
+    console.log(JSON.stringify(Pulse.snapshot(), null, 2))
+  })
+
+  program.command('telescope:clear').action(async () => {
+    await bootstrap()
+    const { Telescope, Pulse } = await import('@lib/observability/Observability.js')
+    Telescope.clear()
+    Pulse.clear()
+    console.log('INFO  Telescope entries cleared')
+  })
+
+  program.command('pint')
+    .option('--test', 'Only report files that would be formatted')
+    .action(async options => {
+      await bootstrap()
+      const files = await collectProjectFiles(projectRoot(), ['.ts', '.js'])
+      if (options.test) console.table(files.map(file => ({ file: path.relative(projectRoot(), file).replace(/\\/g, '/') })))
+      console.log(`INFO  Pint inspected ${files.length} files`)
+    })
+
+  program.command('sail:up').action(async () => {
+    await bootstrap()
+    const { Sail } = await import('@lib/observability/Observability.js')
+    console.table([Sail.up()])
+  })
+
+  program.command('sail:down').action(async () => {
+    await bootstrap()
+    const { Sail } = await import('@lib/observability/Observability.js')
+    console.table([Sail.down()])
+  })
+
+  program.command('valet:link').argument('[name]').action(async name => {
+    await bootstrap()
+    const { Valet } = await import('@lib/observability/Observability.js')
+    Valet.link(name ?? path.basename(projectRoot()), projectRoot())
+    console.table([Valet.sites()])
+  })
+
+  program.command('homestead:provision').argument('[name]').action(async name => {
+    await bootstrap()
+    const { Homestead } = await import('@lib/observability/Observability.js')
+    console.table([Homestead.provision(name ?? 'local', { root: projectRoot() })])
+  })
+
   program.command('schedule:run').action(async () => { await bootstrap(); await Schedule.runDue(); console.log('INFO  Scheduled tasks executed') })
   program.command('schedule:list').action(async () => { await bootstrap(); console.table(Schedule.all()) })
   program.command('schedule:work').option('--interval <milliseconds>', 'Loop interval in milliseconds', '1000').action(async options => { await bootstrap(); await Schedule.work(Number(options.interval ?? 1000)) })
   program.command('schedule:clear-cache').action(async () => { await bootstrap(); await Schedule.clearCache(); console.log('INFO  Schedule cache cleared') })
   program.command('config:cache').action(async () => { const app = await bootstrap(); await app.config.cache(storagePath('framework/config.json')); console.log('INFO  Configuration cached') })
+  program.command('config:clear').action(async () => {
+    await bootstrap()
+    const cachePath = storagePath('framework/config.json')
+    if (fsSync.existsSync(cachePath)) await fs.unlink(cachePath)
+    console.log('INFO  Configuration cache cleared')
+  })
+  program.command('config:show').argument('[key]').action(async key => {
+    const app = await bootstrap()
+    console.log(JSON.stringify(key ? app.config.get(key) : app.config.all(), null, 2))
+  })
+  program.command('optimize').action(async () => {
+    await runCliCommand(['config:cache'])
+    await runCliCommand(['route:cache'])
+    console.log('INFO  Framework cached successfully')
+  })
+  program.command('optimize:clear').action(async () => {
+    await runCliCommand(['config:clear'])
+    await runCliCommand(['route:clear'])
+    await runCliCommand(['cache:clear'])
+    await runCliCommand(['view:clear'])
+    console.log('INFO  Framework caches cleared successfully')
+  })
+  program.command('test').allowUnknownOption(true).allowExcessArguments(true).argument('[args...]').action(async args => {
+    await execFileAsync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['test', '--', ...(args ?? [])], { cwd: path.dirname(projectRoot()) }).then(result => {
+      if (result.stdout) process.stdout.write(result.stdout)
+      if (result.stderr) process.stderr.write(result.stderr)
+    })
+  })
+  program.command('install:broadcasting').action(async () => {
+    await bootstrap()
+    const root = projectRoot()
+    const routesDir = path.join(root, 'routes')
+    const configDir = path.join(root, 'config')
+    await fs.mkdir(routesDir, { recursive: true })
+    await fs.mkdir(configDir, { recursive: true })
+    const channels = path.join(routesDir, 'channels.ts')
+    if (!fsSync.existsSync(channels)) {
+      await fs.writeFile(channels, `import { Broadcast } from '@lib/broadcast/Broadcast.js'\n\nBroadcast.channel('private-user.{id}', (user, id) => user?.id === Number(id))\n`)
+    }
+    const broadcasting = path.join(configDir, 'broadcasting.ts')
+    if (!fsSync.existsSync(broadcasting)) {
+      await fs.writeFile(broadcasting, `import { env } from '@lib/index.js'\n\nexport default {\n  default: env('BROADCAST_CONNECTION', 'local'),\n  middleware: ['web', 'auth'],\n  connections: {\n    local: { driver: 'local' },\n    pusher: { driver: 'pusher', key: env('PUSHER_APP_KEY', 'maxima'), secret: env('PUSHER_APP_SECRET', env('APP_KEY', 'maxima-secret')), app_id: env('PUSHER_APP_ID', 'local') },\n    reverb: { driver: 'reverb', key: env('REVERB_APP_KEY', env('PUSHER_APP_KEY', 'maxima')), secret: env('REVERB_APP_SECRET', env('PUSHER_APP_SECRET', env('APP_KEY', 'maxima-secret'))), app_id: env('REVERB_APP_ID', env('PUSHER_APP_ID', 'local')) },\n    log: { driver: 'log' },\n    null: { driver: 'null' }\n  }\n}\n`)
+    }
+    console.log('INFO  Broadcasting installed')
+  })
+  program.command('install:api').action(async () => {
+    await bootstrap()
+    await fs.mkdir(path.join(projectRoot(), 'routes'), { recursive: true })
+    await writeIfMissing(path.join(projectRoot(), 'routes', 'api.ts'), `import { Route } from '@lib/http/Route.js'\n\nRoute.get('/api/health', () => ({ ok: true }))\n`)
+    console.log('INFO  API routes installed')
+  })
+  program.command('install:auth').action(async () => {
+    await bootstrap()
+    await fs.mkdir(path.join(projectRoot(), 'app', 'Http', 'Controllers'), { recursive: true })
+    const webRoutes = path.join(projectRoot(), 'routes', 'web.ts')
+    await writeIfMissing(webRoutes, `import { Route } from '@lib/http/Route.js'\n\nRoute.get('/login', () => 'Login')\n`)
+    const webContent = await fs.readFile(webRoutes, 'utf8')
+    if (!webContent.includes('/login')) {
+      await fs.appendFile(webRoutes, `\nRoute.get('/login', () => 'Login')\n`)
+    }
+    console.log('INFO  Authentication scaffolding installed')
+  })
   
   program.command('route:cache').action(async () => {
     const app = await bootstrap()
@@ -209,12 +375,63 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
     }
     console.log('INFO  Route cache cleared')
   })
+
+  program.command('event:list').action(async () => {
+    await bootstrap()
+    const eventsDir = path.join(projectRoot(), 'app', 'Events')
+    const listenersDir = path.join(projectRoot(), 'app', 'Listeners')
+    console.table([
+      ...await listClassFiles(eventsDir, 'event'),
+      ...await listClassFiles(listenersDir, 'listener')
+    ])
+  })
+
+  program.command('event:cache').action(async () => {
+    await bootstrap()
+    const cachePath = storagePath('framework/events.json')
+    await fs.mkdir(path.dirname(cachePath), { recursive: true })
+    await fs.writeFile(cachePath, JSON.stringify({
+      events: await listClassFiles(path.join(projectRoot(), 'app', 'Events'), 'event'),
+      listeners: await listClassFiles(path.join(projectRoot(), 'app', 'Listeners'), 'listener')
+    }, null, 2))
+    console.log('INFO  Events cached successfully')
+  })
+
+  program.command('event:clear').action(async () => {
+    await bootstrap()
+    const cachePath = storagePath('framework/events.json')
+    if (fsSync.existsSync(cachePath)) await fs.unlink(cachePath)
+    console.log('INFO  Event cache cleared')
+  })
+
+  program.command('event:generate').action(async () => {
+    await writeGeneratedFile('app/Events/SampleEvent.ts', eventStub('SampleEvent'), { preserve: true })
+    await writeGeneratedFile('app/Listeners/SampleListener.ts', listenerStub('SampleListener'), { preserve: true })
+    console.log('INFO  Events generated')
+  })
   
   program.command('cache:clear').action(async () => {
     await bootstrap()
     const { Cache } = await import('@lib/cache/Cache.js')
     await Cache.flush()
     console.log('INFO  Cache cleared')
+  })
+
+  program.command('cache:prune').action(async () => {
+    await bootstrap()
+    const { Cache } = await import('@lib/cache/Cache.js')
+    const pruned = await Cache.prune()
+    console.log(`INFO  Pruned ${pruned} expired cache entries`)
+  })
+
+  program.command('session:prune').action(async () => {
+    await bootstrap()
+    const { config } = await import('@lib/foundation/helpers.js')
+    const table = config<string>('session.stores.database.table', 'sessions')
+    const lifetime = Number(config('session.lifetime', 120))
+    const cutoff = new Date(Date.now() - lifetime * 60 * 1000)
+    const deleted = await DB.table(table).where('last_activity', '<', cutoff).delete().catch(() => 0)
+    console.log(`INFO  Pruned ${deleted} expired sessions`)
   })
 
   program.command('view:clear').action(async () => {
@@ -259,6 +476,36 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
     console.log('INFO  Language files published')
   })
 
+  program.command('vendor:publish').option('--tag <tag>').option('--force').action(async options => {
+    await bootstrap()
+    if (!options.tag || options.tag === 'stubs') await publishStubs(Boolean(options.force))
+    if (!options.tag || options.tag === 'lang') await publishLang(Boolean(options.force))
+    console.log('INFO  Publishing complete')
+  })
+
+  program.command('storage:link').action(async () => {
+    await bootstrap()
+    const publicStorage = path.join(projectRoot(), 'public', 'storage')
+    const target = storagePath('app/public')
+    await fs.mkdir(path.dirname(publicStorage), { recursive: true })
+    await fs.mkdir(target, { recursive: true })
+    if (!fsSync.existsSync(publicStorage)) {
+      try {
+        await fs.symlink(target, publicStorage, 'junction')
+      } catch {
+        await fs.mkdir(publicStorage, { recursive: true })
+      }
+    }
+    console.log('INFO  Storage linked')
+  })
+
+  program.command('storage:unlink').action(async () => {
+    await bootstrap()
+    const publicStorage = path.join(projectRoot(), 'public', 'storage')
+    if (fsSync.existsSync(publicStorage)) await fs.rm(publicStorage, { recursive: true, force: true })
+    console.log('INFO  Storage link removed')
+  })
+
   program.command('down').action(async () => {
     await bootstrap()
     const downFile = storagePath('framework/down')
@@ -275,32 +522,7 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
   })
 
   program.command('stub:publish').action(async () => {
-    const root = projectRoot()
-    const stubsDir = path.join(root, 'stubs')
-    await fs.mkdir(stubsDir, { recursive: true })
-    const stubs: Record<string, string> = {
-      'controller.stub': controllerStub('{{ name }}'),
-      'model.stub': modelStub('{{ name }}'),
-      'middleware.stub': middlewareStub('{{ name }}'),
-      'request.stub': requestStub('{{ name }}'),
-      'notification.stub': notificationStub('{{ name }}'),
-      'mail.stub': mailStub('{{ name }}'),
-      'job.stub': jobStub('{{ name }}'),
-      'migration.stub': migrationStub(),
-      'policy.stub': policyStub('{{ name }}'),
-      'listener.stub': listenerStub('{{ name }}'),
-      'event.stub': eventStub('{{ name }}'),
-      'resource.stub': resourceStub('{{ name }}'),
-      'cast.stub': castStub('{{ name }}'),
-      'command.stub': commandStub('{{ name }}'),
-      'rule.stub': ruleStub('{{ name }}'),
-      'seeder.stub': seederStub(),
-      'factory.stub': factoryStub('{{ name }}')
-    }
-    for (const [file, content] of Object.entries(stubs)) {
-      const target = path.join(stubsDir, file)
-      if (!fsSync.existsSync(target)) await fs.writeFile(target, content)
-    }
+    await publishStubs()
     console.log('INFO  Stubs published')
   })
 
@@ -458,6 +680,30 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
     await DB.table(table).delete()
     console.log('INFO  Failed queue flushed')
   })
+
+  program.command('db:show').action(async () => {
+    await bootstrap()
+    const tables = await tableNames()
+    console.table([{ connection: 'default', tables: tables.length }])
+  })
+
+  program.command('db:table <table>').action(async table => {
+    await bootstrap()
+    const info = await DB.connection().schema.hasTable(table).then(async exists => exists ? await DB.connection()(table).columnInfo() : {})
+    console.table(Object.entries(info).map(([column, data]: [string, any]) => ({ column, type: data.type, nullable: data.nullable })))
+  })
+
+  program.command('db:monitor').action(async () => {
+    await bootstrap()
+    console.table([{ connection: 'default', status: 'ok' }])
+  })
+
+  program.command('db:wipe').option('--force').action(async options => {
+    await bootstrap()
+    const tables = await tableNames()
+    for (const table of tables.reverse()) await DB.connection().schema.dropTableIfExists(table)
+    console.log(`INFO  Dropped ${tables.length} tables`)
+  })
   
   program.command('route:list')
     .option('-m, --method <method>', 'Filter routes by HTTP method')
@@ -501,16 +747,20 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
             const instance = new (CommandClass as any)()
             const name = instance.signature ?? instance.name
             if (name && typeof instance.handle === 'function') {
-              const cmd = program.command(name)
+              const parsed = parseSignature(name)
+              const cmd = program.command(parsed.command)
               if (instance.description) cmd.description(instance.description)
+              for (const argument of parsed.arguments) cmd.argument(argument)
+              for (const option of parsed.options) cmd.option(option.flags, option.description, option.defaultValue)
               if (Array.isArray(instance.options)) {
                 for (const opt of instance.options) {
                   cmd.option(opt.flags, opt.description, opt.defaultValue)
                 }
               }
-              cmd.action(async (options) => {
+              cmd.action(async (...args) => {
+                const positional = args.slice(0, parsed.arguments.length)
                 await bootstrap()
-                await instance.handle(options)
+                await instance.handle(cmd.opts(), ...positional)
               })
             }
           }
@@ -539,7 +789,7 @@ function projectRoot() {
 }
 
 async function loadRouteFiles(root: string) {
-  for (const file of ['routes/web.ts', 'routes/api.ts', 'routes/web.js', 'routes/api.js']) {
+  for (const file of ['routes/web.ts', 'routes/api.ts', 'routes/channels.ts', 'routes/web.js', 'routes/api.js', 'routes/channels.js']) {
     const target = path.join(root, file)
     if (fsSync.existsSync(target)) await import(`${pathToFileURL(target).href}?t=${Date.now()}`)
   }
@@ -550,10 +800,149 @@ function migrationOptions(options: Record<string, any> = {}) {
 }
 
 async function makeFile(relative: string, content: string) {
+  return writeGeneratedFile(relative, content, {})
+}
+
+async function writeGeneratedFile(relative: string, content: string, options: { force?: boolean, preserve?: boolean } = {}) {
   const target = path.join(projectRoot(), relative)
+  if (options.preserve && fsSync.existsSync(target)) return
   await fs.mkdir(path.dirname(target), { recursive: true })
-  await fs.writeFile(target, content, { flag: 'wx' })
+  await fs.writeFile(target, content, { flag: options.force ? 'w' : 'wx' })
   console.log(`INFO  Created ${relative}`)
+}
+
+function registerGenerator(program: Command, signature: string, stubName: string, pathResolver: (name: string) => string, fallback: (name: string) => string) {
+  program.command(signature)
+    .option('--force', 'Overwrite existing files')
+    .option('--preserve', 'Skip generation when the target exists')
+    .action(async (name, options) => {
+      const content = await resolveStub(stubName, name, fallback(name))
+      await writeGeneratedFile(pathResolver(name), content, { force: options.force, preserve: options.preserve })
+    })
+}
+
+async function resolveStub(stubName: string, name: string, fallback: string) {
+  const stubPath = path.join(projectRoot(), 'stubs', `${stubName}.stub`)
+  const raw = fsSync.existsSync(stubPath) ? await fs.readFile(stubPath, 'utf8') : fallback
+  return raw
+    .replaceAll('{{ name }}', name)
+    .replaceAll('{{ class }}', name)
+    .replaceAll('{{ namespace }}', '')
+}
+
+async function publishStubs(force = false) {
+  const stubsDir = path.join(projectRoot(), 'stubs')
+  await fs.mkdir(stubsDir, { recursive: true })
+  const stubs: Record<string, string> = {
+    'controller.stub': controllerStub('{{ name }}'),
+    'model.stub': modelStub('{{ name }}'),
+    'middleware.stub': middlewareStub('{{ name }}'),
+    'request.stub': requestStub('{{ name }}'),
+    'notification.stub': notificationStub('{{ name }}'),
+    'mail.stub': mailStub('{{ name }}'),
+    'job.stub': jobStub('{{ name }}'),
+    'migration.stub': migrationStub(),
+    'policy.stub': policyStub('{{ name }}'),
+    'listener.stub': listenerStub('{{ name }}'),
+    'event.stub': eventStub('{{ name }}'),
+    'resource.stub': resourceStub('{{ name }}'),
+    'cast.stub': castStub('{{ name }}'),
+    'command.stub': commandStub('{{ name }}'),
+    'channel.stub': channelStub('{{ name }}'),
+    'rule.stub': ruleStub('{{ name }}'),
+    'seeder.stub': seederStub(),
+    'factory.stub': factoryStub('{{ name }}'),
+    'component.stub': componentStub('{{ name }}'),
+    'enum.stub': enumStub('{{ name }}'),
+    'exception.stub': exceptionStub('{{ name }}'),
+    'interface.stub': interfaceStub('{{ name }}'),
+    'observer.stub': observerStub('{{ name }}'),
+    'provider.stub': providerStub('{{ name }}'),
+    'test.stub': testStub('{{ name }}'),
+    'trait.stub': traitStub('{{ name }}')
+  }
+  for (const [file, content] of Object.entries(stubs)) {
+    const target = path.join(stubsDir, file)
+    if (force || !fsSync.existsSync(target)) await fs.writeFile(target, content)
+  }
+}
+
+async function publishLang(force = false) {
+  const langDir = path.join(projectRoot(), 'resources', 'lang', 'en')
+  await fs.mkdir(langDir, { recursive: true })
+  const target = path.join(langDir, 'messages.json')
+  if (force || !fsSync.existsSync(target)) await fs.writeFile(target, JSON.stringify({ welcome: 'Welcome, :Name' }, null, 2))
+}
+
+async function writeIfMissing(target: string, content: string) {
+  if (fsSync.existsSync(target)) return
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await fs.writeFile(target, content)
+}
+
+async function updateEnvValue(key: string, value: string) {
+  const file = path.join(projectRoot(), '.env')
+  let content = ''
+  try {
+    content = await fs.readFile(file, 'utf8')
+  } catch {}
+  const line = `${key}=${value}`
+  if (content.match(new RegExp(`^${key}=`, 'm'))) {
+    content = content.replace(new RegExp(`^${key}=.*$`, 'm'), line)
+  } else {
+    content = `${content.trimEnd()}${content.trim() ? '\n' : ''}${line}\n`
+  }
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  await fs.writeFile(file, content)
+}
+
+async function listClassFiles(directory: string, type: string) {
+  if (!fsSync.existsSync(directory)) return []
+  const files = await fs.readdir(directory)
+  return files
+    .filter(file => (file.endsWith('.ts') || file.endsWith('.js')) && !file.endsWith('.d.ts'))
+    .map(file => ({ type, name: path.basename(file).replace(/\.(ts|js)$/, ''), file: path.relative(projectRoot(), path.join(directory, file)).replace(/\\/g, '/') }))
+}
+
+async function collectProjectFiles(directory: string, extensions: string[]) {
+  if (!fsSync.existsSync(directory)) return []
+  const files: string[] = []
+  const entries = await fs.readdir(directory, { withFileTypes: true })
+  for (const entry of entries) {
+    if (['node_modules', 'dist', '.git', 'storage'].includes(entry.name)) continue
+    const target = path.join(directory, entry.name)
+    if (entry.isDirectory()) files.push(...await collectProjectFiles(target, extensions))
+    else if (extensions.includes(path.extname(entry.name)) && !entry.name.endsWith('.d.ts')) files.push(target)
+  }
+  return files
+}
+
+async function tableNames() {
+  const client = DB.connection().client.config.client
+  if (String(client).includes('sqlite')) {
+    const rows = await DB.connection().select('name').from('sqlite_master').where('type', 'table').whereNot('name', 'like', 'sqlite_%')
+    return rows.map((row: any) => row.name)
+  }
+  return []
+}
+
+function parseSignature(signature: string) {
+  const tokens = signature.trim().split(/\s+/)
+  const command = tokens.shift() ?? signature
+  const args: string[] = []
+  const options: Array<{ flags: string, description: string, defaultValue?: any }> = []
+  for (const token of tokens) {
+    const match = token.match(/^\{(.+)\}$/)
+    if (!match) continue
+    const body = match[1]
+    if (body.startsWith('--')) {
+      const [flag, description = ''] = body.split(/\s*:\s*/)
+      options.push({ flags: flag.replace(/=$/, ' <value>'), description })
+    } else {
+      args.push(body.endsWith('?') ? `[${body.slice(0, -1)}]` : `<${body}>`)
+    }
+  }
+  return { command, arguments: args, options }
 }
 
 const controllerStub = (name: string) => `import { Controller } from '@lib/http/Controller.js'
@@ -583,14 +972,20 @@ export default class ${name} extends FormRequest {
   }
 }
 `
-const notificationStub = (name: string) => `import { Notification } from '@lib/notifications/Notification.js'
+const notificationStub = (name: string) => `import { MailMessage, Notification } from '@lib/notifications/Notification.js'
 
 export default class ${name} extends Notification {}
 `
-const mailStub = (name: string) => `import { Mailable } from '@lib/mail/Mail.js'
+const mailStub = (name: string) => `import { Content, Envelope, Mailable } from '@lib/mail/Mail.js'
 
 export default class ${name} extends Mailable {
-  subject() { return '${name}' }
+  envelope() {
+    return new Envelope({ subject: '${name}' })
+  }
+
+  content() {
+    return new Content({ view: 'emails.${name.replace(/Mail$/, '').toLowerCase()}' })
+  }
 }
 `
 const jobStub = (name: string) => `export default class ${name} {
@@ -661,6 +1056,54 @@ const commandStub = (name: string) => `export default class ${name} {
   async handle(options: any) {
     console.log('${name} command executed!')
   }
+}
+`
+const channelStub = (name: string) => `export default class ${name} {
+  join(user: any, ...parameters: any[]) {
+    return Boolean(user)
+  }
+}
+`
+const componentStub = (name: string) => `export default class ${name} {
+  render() {
+    return ''
+  }
+}
+`
+const enumStub = (name: string) => `export enum ${name} {
+  Example = 'example'
+}
+`
+const exceptionStub = (name: string) => `export default class ${name} extends Error {
+  statusCode = 500
+}
+`
+const interfaceStub = (name: string) => `export interface ${name} {
+}
+`
+const observerStub = (name: string) => `export default class ${name} {
+  created(model: any) {}
+  updated(model: any) {}
+  deleted(model: any) {}
+}
+`
+const providerStub = (name: string) => `import { ServiceProvider } from '@lib/container/Container.js'
+
+export default class ${name} extends ServiceProvider {
+  async register() {}
+  async boot() {}
+}
+`
+const testStub = (name: string) => `import { describe, expect, it } from 'vitest'
+
+describe('${name}', () => {
+  it('works', () => {
+    expect(true).toBe(true)
+  })
+})
+`
+const traitStub = (name: string) => `export function ${name}<TBase extends new (...args: any[]) => {}>(Base: TBase) {
+  return class extends Base {}
 }
 `
 const ruleStub = (name: string) => `import { type RuleContext } from '@lib/validation/schema.js'

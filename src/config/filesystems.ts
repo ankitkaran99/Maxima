@@ -2,6 +2,7 @@ import { env, storagePath } from '@lib/index.js'
 
 export default {
   default: env('FILESYSTEM_DISK', 'local'),
+  cloud: env('FILESYSTEM_CLOUD', 's3'),
   disks: {
     local: { driver: 'local', root: storagePath('app'), visibility: 'private' },
     public: { driver: 'local', root: storagePath('app/public'), url: `${env('APP_URL', '')}/storage`, visibility: 'public' },

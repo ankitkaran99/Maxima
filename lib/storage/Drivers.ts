@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { Readable } from 'node:stream'
 import { buffer as streamToBuffer } from 'node:stream/consumers'
 import * as ftp from 'basic-ftp'
@@ -45,6 +46,11 @@ export class FtpDisk implements Disk {
       return false
     }
   }
+  async missing(file: string) { return !(await this.exists(file)) }
+  async existsAll(files: string[]) { return (await Promise.all(files.map(file => this.exists(file)))).every(Boolean) }
+  async existsAny(files: string[]) { return (await Promise.all(files.map(file => this.exists(file)))).some(Boolean) }
+  async missingAll(files: string[]) { return !(await this.existsAny(files)) }
+  async missingAny(files: string[]) { return !(await this.existsAll(files)) }
 
   async delete(file: string) { await this.withClient(client => client.remove(this.remote(file))) }
   async copy(from: string, to: string) { await this.put(to, await this.get(from)) }
@@ -53,11 +59,14 @@ export class FtpDisk implements Disk {
   async lastModified(file: string) { return this.withClient<any>(client => client.lastMod(this.remote(file)) as any) as Promise<Date> }
   async mimeType(file: string) { return lookup(file) }
   async files(directory = '') { return this.list(directory, entry => entry.isFile).then(entries => entries.map(entry => entry.path)) }
+  async allFiles(directory = '') { return this.files(directory) }
   async directories(directory = '') { return this.list(directory, entry => entry.isDirectory).then(entries => entries.map(entry => entry.path)) }
+  async allDirectories(directory = '') { return this.directories(directory) }
   async makeDirectory(directory: string) { await this.withClient(client => client.ensureDir(this.remote(directory))) }
   async deleteDirectory(directory: string) { await this.withClient(client => client.removeDir(this.remote(directory))) }
   url(file: string) { return joinUrl(this.options.url ?? ftpBaseUrl(this.options), this.remote(file)) }
   temporaryUrl(file: string, expiresAt: Date) { return `${this.url(file)}?expires=${expiresAt.getTime()}` }
+  async temporaryUploadUrl(file: string, expiresAt: Date) { return { url: this.temporaryUrl(file, expiresAt), headers: {} } }
   async readStream(file: string) { return Readable.from([await this.get(file)]) }
   async writeStream(file: string, stream: NodeJS.ReadableStream) { await this.put(file, stream) }
   async setVisibility(file: string, visibility: Visibility) {
@@ -68,6 +77,13 @@ export class FtpDisk implements Disk {
     })
   }
   async getVisibility(): Promise<Visibility> { return this.options.visibility ?? 'private' }
+  async checksum(file: string, algorithm = 'md5') { return crypto.createHash(algorithm).update(await this.get(file)).digest('hex') }
+  async response(file: string, name = path.basename(file), headers: Record<string, string | number | boolean> = {}) {
+    return storageResponse(await this.get(file), file, name, 'inline', headers)
+  }
+  async download(file: string, name = path.basename(file), headers: Record<string, string | number | boolean> = {}) {
+    return storageResponse(await this.get(file), file, name, 'attachment', headers)
+  }
 
   private async withClient<T>(callback: (client: ftp.Client) => Promise<T>) {
     const client = new ftp.Client()
@@ -111,6 +127,11 @@ export class SftpDisk implements Disk {
     return Buffer.from(String(value))
   }
   async exists(file: string) { return Boolean(await this.withClient(client => client.exists(this.remote(file)))) }
+  async missing(file: string) { return !(await this.exists(file)) }
+  async existsAll(files: string[]) { return (await Promise.all(files.map(file => this.exists(file)))).every(Boolean) }
+  async existsAny(files: string[]) { return (await Promise.all(files.map(file => this.exists(file)))).some(Boolean) }
+  async missingAll(files: string[]) { return !(await this.existsAny(files)) }
+  async missingAny(files: string[]) { return !(await this.existsAll(files)) }
   async delete(file: string) { await this.withClient(client => client.delete(this.remote(file))) }
   async copy(from: string, to: string) { await this.put(to, await this.get(from)) }
   async move(from: string, to: string) { await this.withClient(client => client.rename(this.remote(from), this.remote(to))) }
@@ -120,13 +141,16 @@ export class SftpDisk implements Disk {
   async files(directory = '') {
     return this.list(directory, entry => entry.type === '-').then(entries => entries.map(entry => entry.path))
   }
+  async allFiles(directory = '') { return this.files(directory) }
   async directories(directory = '') {
     return this.list(directory, entry => entry.type === 'd').then(entries => entries.map(entry => entry.path))
   }
+  async allDirectories(directory = '') { return this.directories(directory) }
   async makeDirectory(directory: string) { await this.withClient(client => client.mkdir(this.remote(directory), true)) }
   async deleteDirectory(directory: string) { await this.withClient(client => client.rmdir(this.remote(directory), true)) }
   url(file: string) { return joinUrl(this.options.url ?? sftpBaseUrl(this.options), this.remote(file)) }
   temporaryUrl(file: string, expiresAt: Date) { return `${this.url(file)}?expires=${expiresAt.getTime()}` }
+  async temporaryUploadUrl(file: string, expiresAt: Date) { return { url: this.temporaryUrl(file, expiresAt), headers: {} } }
   async readStream(file: string) { return Readable.from([await this.get(file)]) }
   async writeStream(file: string, stream: NodeJS.ReadableStream) { await this.put(file, stream) }
   async setVisibility(file: string, visibility: Visibility) {
@@ -135,6 +159,13 @@ export class SftpDisk implements Disk {
   async getVisibility(file: string): Promise<Visibility> {
     const mode = (await this.withClient(client => client.stat(this.remote(file)) as any) as any).mode
     return (mode & 0o004) ? 'public' : 'private'
+  }
+  async checksum(file: string, algorithm = 'md5') { return crypto.createHash(algorithm).update(await this.get(file)).digest('hex') }
+  async response(file: string, name = path.basename(file), headers: Record<string, string | number | boolean> = {}) {
+    return storageResponse(await this.get(file), file, name, 'inline', headers)
+  }
+  async download(file: string, name = path.basename(file), headers: Record<string, string | number | boolean> = {}) {
+    return storageResponse(await this.get(file), file, name, 'attachment', headers)
   }
 
   private async withClient<T>(callback: (client: SftpClient) => Promise<T>) {
@@ -198,6 +229,11 @@ export class S3Disk implements Disk {
       return false
     }
   }
+  async missing(file: string) { return !(await this.exists(file)) }
+  async existsAll(files: string[]) { return (await Promise.all(files.map(file => this.exists(file)))).every(Boolean) }
+  async existsAny(files: string[]) { return (await Promise.all(files.map(file => this.exists(file)))).some(Boolean) }
+  async missingAll(files: string[]) { return !(await this.existsAny(files)) }
+  async missingAny(files: string[]) { return !(await this.existsAll(files)) }
 
   async delete(file: string) {
     await this.client().send(new DeleteObjectCommand({
@@ -254,6 +290,7 @@ export class S3Disk implements Disk {
       .filter(key => !key.endsWith('/'))
       .map(key => normalize(key))
   }
+  async allFiles(directory = '') { return this.files(directory) }
 
   async directories(directory = '') {
     const response = await this.client().send(new ListObjectsV2Command({
@@ -266,6 +303,7 @@ export class S3Disk implements Disk {
       .filter((key): key is string => !!key)
       .map(key => normalize(key))
   }
+  async allDirectories(directory = '') { return this.directories(directory) }
 
   async makeDirectory() {}
 
@@ -294,6 +332,19 @@ export class S3Disk implements Disk {
       expiresIn: Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / 1000))
     })
   }
+  async temporaryUploadUrl(file: string, expiresAt: Date, options: Record<string, any> = {}) {
+    return {
+      url: await getSignedUrl(this.client(), new PutObjectCommand({
+        Bucket: this.bucket(),
+        Key: this.remote(file),
+        ContentType: options.contentType ?? options.ContentType,
+        Metadata: options.metadata
+      }), {
+        expiresIn: Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / 1000))
+      }),
+      headers: options.headers ?? {}
+    }
+  }
 
   async readStream(file: string) {
     const response = await this.client().send(new GetObjectCommand({
@@ -311,6 +362,13 @@ export class S3Disk implements Disk {
 
   async getVisibility(): Promise<Visibility> {
     return this.options.visibility ?? 'private'
+  }
+  async checksum(file: string, algorithm = 'md5') { return crypto.createHash(algorithm).update(await this.get(file)).digest('hex') }
+  async response(file: string, name = path.basename(file), headers: Record<string, string | number | boolean> = {}) {
+    return storageResponse(await this.get(file), file, name, 'inline', headers)
+  }
+  async download(file: string, name = path.basename(file), headers: Record<string, string | number | boolean> = {}) {
+    return storageResponse(await this.get(file), file, name, 'attachment', headers)
   }
 
   private clientInstance() {
@@ -379,6 +437,18 @@ function prefix(directory: string) {
 
 function normalize(file: string) {
   return file.replaceAll('\\', '/').replace(/^\/+/, '').split('/').filter(part => part && part !== '..').join('/')
+}
+
+function storageResponse(body: Buffer, file: string, name: string, disposition: 'inline' | 'attachment', headers: Record<string, string | number | boolean>) {
+  return {
+    body,
+    statusCode: 200,
+    headers: {
+      'content-type': lookup(file) || 'application/octet-stream',
+      'content-disposition': `${disposition}; filename="${name.replace(/["\\\r\n]/g, '_')}"`,
+      ...headers
+    }
+  }
 }
 
 function toReadable(contents: any) {

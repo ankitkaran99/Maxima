@@ -60,6 +60,19 @@ export class SchemaBuilder {
     })
   }
 
+  async createNotificationsTable(table = 'notifications'): Promise<void> {
+    await this.create(table, builder => {
+      builder.uuid('id').primary()
+      builder.string('type').notNullable()
+      builder.string('notifiable_type').nullable().index()
+      builder.string('notifiable_id').nullable().index()
+      builder.text('data').notNullable()
+      builder.timestamp('read_at').nullable()
+      builder.timestamp('created_at').nullable()
+      builder.timestamp('updated_at').nullable()
+    })
+  }
+
   async createQueueTables(jobs = 'jobs', failed = 'failed_jobs'): Promise<void> {
     await this.create(jobs, builder => {
       builder.increments('id')

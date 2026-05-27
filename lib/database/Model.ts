@@ -97,6 +97,7 @@ export class Model {
   static routeKeyName = 'id'
   static lazyLoadingPrevented = false
   static dispatchesEvents = true
+  static broadcastsEvents = false
   
   private static events: Record<EventName, EventCallback[]> = {
     creating: [], created: [], updating: [], updated: [], deleting: [], deleted: []
@@ -474,6 +475,10 @@ export class Model {
     if (!Constructor.dispatchesEvents) return
     const list = Constructor.events?.[event] ?? []
     for (const callback of list) await callback(this)
+    if ((Constructor as any).broadcastsEvents) {
+      const { Broadcast } = await import('@lib/broadcast/Broadcast.js')
+      await Broadcast.model(this, event)
+    }
   }
 
   private syncOriginal() {

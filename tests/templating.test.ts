@@ -241,4 +241,16 @@ describe('Templating', () => {
 
     await expect(factory.render('cached')).resolves.toContain('Second')
   })
+
+  it('recompiles when a compiled view cache file is corrupt', async () => {
+    const cacheDir = path.join(root, 'storage', 'framework', 'views')
+    await fs.writeFile(path.join(root, 'resources', 'views', 'corrupt.edge'), 'Fresh {{ name }}')
+    const factory = new ViewFactory(path.join(root, 'resources'), cacheDir)
+
+    await expect(factory.render('corrupt', { name: 'Ada' })).resolves.toContain('Fresh Ada')
+    const [cacheFile] = await fs.readdir(cacheDir)
+    await fs.writeFile(path.join(cacheDir, cacheFile), 'not-json')
+
+    await expect(factory.render('corrupt', { name: 'Grace' })).resolves.toContain('Fresh Grace')
+  })
 })

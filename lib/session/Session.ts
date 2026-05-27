@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { DB } from '@lib/database/DB.js'
 import { config } from '@lib/foundation/helpers.js'
+import { Cache } from '@lib/cache/Cache.js'
 
 type SessionFlash = { old: Record<string, unknown>, next: Record<string, unknown> }
 type SessionRecord = {
@@ -40,6 +41,14 @@ export class SessionAdapter {
     this.dirty = true
   }
 
+  has(key: string) {
+    return this.get(key) !== undefined
+  }
+
+  missing(key: string) {
+    return !this.has(key)
+  }
+
   forget(key: string) {
     delete this.record.data[key]
     delete this.record.flash.old[key]
@@ -54,10 +63,21 @@ export class SessionAdapter {
     this.dirty = true
   }
 
-  regenerate() {
+  regenerate(destroy = false) {
+    const previous = this.record.id
     this.record.id = crypto.randomUUID()
+    if (destroy && previous) this.manager.destroyId(previous).catch(() => {})
     this.dirty = true
     return this.record.id
+  }
+
+  migrate(destroy = false) {
+    return this.regenerate(destroy)
+  }
+
+  invalidate() {
+    this.flush()
+    return this.migrate(true)
   }
 
   flash(key: string, value: unknown) {
@@ -79,6 +99,38 @@ export class SessionAdapter {
 
   oldInput() {
     return this.get('_old_input', {})
+  }
+
+  flashInput(input: Record<string, unknown>) {
+    this.flash('_old_input', input)
+  }
+
+  previousUrl() {
+    return this.get('_previous.url')
+  }
+
+  setPreviousUrl(url: string) {
+    this.put('_previous.url', url)
+  }
+
+  cache() {
+    const id = this.id() ?? this.regenerate()
+    const prefix = `session:${id}:`
+    return {
+      get: <T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)) => Cache.get<T>(prefix + key, defaultValue),
+      put: (key: string, value: any, seconds?: number) => Cache.put(prefix + key, value, seconds),
+      remember: <T>(key: string, seconds: number, callback: () => T | Promise<T>) => Cache.remember(prefix + key, seconds, callback),
+      forget: (key: string) => Cache.forget(prefix + key),
+      flush: async () => {
+        const tagged = Cache.tags(`session:${id}`)
+        if ((Cache.store() as any).supportsTags?.()) await tagged.flush()
+      }
+    }
+  }
+
+  async block<T>(seconds: number, callback: () => T | Promise<T>) {
+    const id = this.id() ?? this.regenerate()
+    return Cache.lock(`session:${id}`, seconds).block(seconds, callback)
   }
 
   flashErrors(errors: Record<string, string[]>, bag = 'default') {
@@ -165,11 +217,13 @@ export class SessionManager {
   }
 
   async destroy(session: SessionAdapter, reply: any) {
-    if (session.id()) {
-      memoryStores.delete(session.id()!)
-      await DB.table(this.sessionConfig.stores?.database?.table ?? 'sessions').where('id', session.id()).delete().catch(() => {})
-    }
+    if (session.id()) await this.destroyId(session.id()!)
     this.writeCookie(reply, this.cookieOptions.name ?? 'maxima_session', '', { ...this.cookieOptions, expires: new Date(0) })
+  }
+
+  async destroyId(id: string) {
+    memoryStores.delete(id)
+    await DB.table(this.sessionConfig.stores?.database?.table ?? 'sessions').where('id', id).delete().catch(() => {})
   }
 
   async load(request: any): Promise<SessionRecord> {
