@@ -147,6 +147,24 @@ describe('CLI Extras', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('views cached'))
   })
 
+  it('dist:publish copies views, emails, lang, and public assets to dist', async () => {
+    const srcViewsDir = path.join(root, 'src', 'resources', 'views')
+    const srcPublicDir = path.join(root, 'src', 'public')
+    await fs.mkdir(srcViewsDir, { recursive: true })
+    await fs.mkdir(srcPublicDir, { recursive: true })
+    await fs.writeFile(path.join(srcViewsDir, 'test.edge'), 'test view')
+    await fs.writeFile(path.join(srcPublicDir, 'test.png'), 'png contents')
+
+    await runCliCommand(['dist:publish'])
+
+    const distViewsFile = path.join(root, 'dist', 'src', 'resources', 'views', 'test.edge')
+    const distPublicFile = path.join(root, 'dist', 'src', 'public', 'test.png')
+
+    expect(fsSync.existsSync(distViewsFile)).toBe(true)
+    expect(fsSync.existsSync(distPublicFile)).toBe(true)
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('copied successfully to dist'))
+  })
+
   it('down and up toggle maintenance mode in src storage', async () => {
     await runCliCommand(['down'])
     const downFile = path.join(root, 'src', 'storage', 'framework', 'down')

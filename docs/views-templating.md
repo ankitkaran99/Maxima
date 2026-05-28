@@ -146,3 +146,17 @@ Rendered templates are compiled into `storage/framework/views` and invalidated w
 npm run maxima -- view:cache
 npm run maxima -- view:clear
 ```
+
+### Production In-Memory Caching
+
+To optimize performance and avoid filesystem lock contention under high-load benchmarks on production systems, Maxima features an in-memory compilation and hash cache.
+
+When running in production mode (`APP_ENV=production` or `CACHE_VIEWS=true`), compiled view strings and their SHA1 cryptographic hashes are cached in memory using a size-limited LRU (Least Recently Used) cache. This completely avoids subsequent file stats (`fs.stat`) and disk reads, bringing rendering times down to CPU-bound memory access.
+
+You can configure the in-memory cache behavior via the following environment variables:
+
+| Environment Variable | Description | Default |
+|---|---|---|
+| `CACHE_VIEWS` | Set to `true` to enable permanent in-memory template and hash caching regardless of environment. | `false` |
+| `VIEW_CACHE_LIMIT` | The maximum number of compiled template strings to keep in-memory. | `100` |
+| `VIEW_HASH_CACHE_LIMIT` | The maximum number of pre-computed template hashes to keep in-memory (bypasses SHA1 crypto calls). | `100` |

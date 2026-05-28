@@ -17,12 +17,40 @@ type CompiledCache = {
   dependencyMtimes?: Record<string, number>
 }
 
+class LruCache<K, V> {
+  private cache = new Map<K, V>()
+  constructor(private limit = 100) {}
+
+  get(key: K): V | undefined {
+    if (!this.cache.has(key)) return undefined
+    const value = this.cache.get(key)!
+    this.cache.delete(key)
+    this.cache.set(key, value)
+    return value
+  }
+
+  set(key: K, value: V): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key)
+    } else if (this.cache.size >= this.limit) {
+      const oldestKey = this.cache.keys().next().value
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey)
+      }
+    }
+    this.cache.set(key, value)
+  }
+}
+
 export class ViewFactory {
   private edge = Edge.create()
   private shared: Record<string, unknown> = {}
   private composers: { pattern: string | RegExp, callback: ViewCallback }[] = []
   private creators: { pattern: string | RegExp, callback: ViewCallback }[] = []
   private compiledPath: string
+  private compilationPromises = new Map<string, Promise<string>>()
+  private compiledCache = new LruCache<string, string>(Number(env('VIEW_CACHE_LIMIT', 100)))
+  private hashCache = new LruCache<string, string>(Number(env('VIEW_HASH_CACHE_LIMIT', 100)))
 
   constructor(private rootPath = resourcePath(), compiledPath = storagePath('framework/views')) {
     this.compiledPath = compiledPath
@@ -438,6 +466,28 @@ export class ViewFactory {
   }
 
   private async compiledTemplate(file: string, template: string) {
+    const isProduction = env('APP_ENV') === 'production' || env('CACHE_VIEWS') === 'true' || env('CACHE_VIEWS') === true
+    if (isProduction) {
+      const cached = this.compiledCache.get(file)
+      if (cached) return cached
+    }
+
+    let promise = this.compilationPromises.get(file)
+    if (!promise) {
+      promise = this.doCompileTemplate(file, template)
+      this.compilationPromises.set(file, promise)
+      promise.finally(() => {
+        this.compilationPromises.delete(file)
+      })
+    }
+    const compiled = await promise
+    if (isProduction) {
+      this.compiledCache.set(file, compiled)
+    }
+    return compiled
+  }
+
+  private async doCompileTemplate(file: string, template: string) {
     const stat = await fs.stat(file)
     const cacheFile = path.join(this.compiledPath, `${crypto.createHash('sha1').update(file).digest('hex')}.edge`)
     if (fsSync.existsSync(cacheFile)) {
@@ -455,15 +505,7 @@ export class ViewFactory {
             }
             if (valid) return cached.compiled
           } else {
-            const source = await fs.readFile(file, 'utf8')
-            const layoutMatch = source.match(/@extends\(\s*['"]([^'"]+)['"]\s*\)/)
-            if (!layoutMatch) return cached.compiled
-            const layoutFile = path.join(this.rootPath, 'views', `${layoutMatch[1]}.edge`)
-            const layoutStat = await fs.stat(layoutFile).catch(() => null)
-            if (layoutStat) {
-              const dependencyMtime = cached.dependencyMtimes?.[layoutFile] ?? 0
-              if (dependencyMtime >= layoutStat.mtimeMs) return cached.compiled
-            }
+            return cached.compiled
           }
         }
       } catch {
@@ -492,7 +534,12 @@ export class ViewFactory {
   }
 
   private cacheKey(value: string) {
-    return crypto.createHash('sha1').update(value).digest('hex')
+    let hash = this.hashCache.get(value)
+    if (!hash) {
+      hash = crypto.createHash('sha1').update(value).digest('hex')
+      this.hashCache.set(value, hash)
+    }
+    return hash
   }
 
   private escapeRegExp(value: string) {

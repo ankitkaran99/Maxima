@@ -454,6 +454,61 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
     console.log(`INFO  Compiled ${compiled.length} views cached`)
   })
 
+  program.command('dist:publish').action(async () => {
+    await bootstrap()
+    const srcRoot = projectRoot()
+    const hasSrc = path.basename(srcRoot).toLowerCase() === 'src'
+    const destRoot = hasSrc ? path.join(path.dirname(srcRoot), 'dist', 'src') : path.join(srcRoot, 'dist')
+
+    if (!fsSync.existsSync(srcRoot)) {
+      console.error(`Source directory not found: ${srcRoot}`)
+      process.exit(1)
+    }
+
+    const filter = (filePath: string) => {
+      if (filePath.endsWith('.edge')) {
+        return true
+      }
+      const relative = path.relative(srcRoot, filePath)
+      const firstSegment = relative.split(/[/\\]/)[0]
+      const inResourcesOrPublic = firstSegment === 'resources' || firstSegment === 'public'
+      if (inResourcesOrPublic) {
+        const isCode = filePath.endsWith('.ts') || filePath.endsWith('.js') || filePath.endsWith('.d.ts') || filePath.endsWith('.js.map')
+        return !isCode
+      }
+      return false
+    }
+
+    const copyDir = async (src: string, dest: string) => {
+      const entries = await fs.readdir(src, { withFileTypes: true })
+      await fs.mkdir(dest, { recursive: true })
+
+      for (const entry of entries) {
+        const srcPath = path.join(src, entry.name)
+        const destPath = path.join(dest, entry.name)
+
+        if (entry.isDirectory()) {
+          if (['node_modules', 'dist', '.git', '.antigravitycli', 'storage'].includes(entry.name)) {
+            continue
+          }
+          await copyDir(srcPath, destPath)
+        } else if (entry.isFile()) {
+          if (filter(srcPath)) {
+            await fs.copyFile(srcPath, destPath)
+          }
+        }
+      }
+    }
+
+    try {
+      await copyDir(srcRoot, destRoot)
+      console.log('INFO  Assets (edge templates, lang, public files) copied successfully to dist')
+    } catch (error) {
+      console.error('Error copying assets:', error)
+      process.exit(1)
+    }
+  })
+
   program.command('lang:publish').action(async () => {
     await bootstrap()
     const langDir = path.join(projectRoot(), 'resources', 'lang', 'en')
