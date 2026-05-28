@@ -53,8 +53,21 @@ export class Container {
     return this
   }
 
+  private resolveKey(key: ContainerKey): ContainerKey {
+    let current = key
+    const visited = new Set<ContainerKey>()
+    while (typeof current === 'string' && this.aliases.has(current)) {
+      if (visited.has(current)) {
+        throw new Error(`Circular alias dependency detected for [${current}].`)
+      }
+      visited.add(current)
+      current = this.aliases.get(current)!
+    }
+    return current
+  }
+
   async make<T>(key: ContainerKey<T>): Promise<T> {
-    const resolvedKey = typeof key === 'string' && this.aliases.has(key) ? this.aliases.get(key)! : key
+    const resolvedKey = this.resolveKey(key) as ContainerKey<T>
     const binding = this.bindings.get(resolvedKey)
 
     let value: any
@@ -87,7 +100,7 @@ export class Container {
   }
 
   has(key: ContainerKey) {
-    const resolvedKey = typeof key === 'string' && this.aliases.has(key) ? this.aliases.get(key)! : key
+    const resolvedKey = this.resolveKey(key)
     return this.bindings.has(resolvedKey) || (typeof key === 'string' && this.aliases.has(key))
   }
 
@@ -184,7 +197,7 @@ export class Container {
 
   // Extends/Decorators API
   extend<T>(key: ContainerKey<T>, decorator: (instance: T, container: Container) => T | Promise<T>) {
-    const resolvedKey = typeof key === 'string' && this.aliases.has(key) ? this.aliases.get(key)! : key
+    const resolvedKey = this.resolveKey(key) as ContainerKey<T>
     const binding = this.bindings.get(resolvedKey)
 
     if (!binding) {

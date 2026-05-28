@@ -5,6 +5,7 @@ import fsSync from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { basePath } from '@lib/support/paths.js'
+import { transactionStorage } from '@lib/database/TransactionContext.js'
 
 type EventListenerObject = {
   handle(event: any, name?: string): any
@@ -71,7 +72,12 @@ export class EventManager {
 
   dispatch(event: string | Record<string, any> | BroadcastableEvent, payload?: any) {
     if (this.shouldDispatchAfterCommit(event)) {
-      this.deferredEvents.push(() => this.dispatchNow(event, payload))
+      const store = transactionStorage.getStore()
+      if (store) {
+        store.deferredEvents.push(() => this.dispatchNow(event, payload))
+      } else {
+        this.deferredEvents.push(() => this.dispatchNow(event, payload))
+      }
       return typeof event === 'string' ? payload : event
     }
     return this.dispatchNow(event, payload)
@@ -98,7 +104,12 @@ export class EventManager {
 
   async dispatchAsync(event: string | Record<string, any> | BroadcastableEvent, payload?: any) {
     if (this.shouldDispatchAfterCommit(event)) {
-      this.deferredEvents.push(() => this.dispatchAsyncNow(event, payload))
+      const store = transactionStorage.getStore()
+      if (store) {
+        store.deferredEvents.push(() => this.dispatchAsyncNow(event, payload))
+      } else {
+        this.deferredEvents.push(() => this.dispatchAsyncNow(event, payload))
+      }
       return typeof event === 'string' ? payload : event
     }
     return this.dispatchAsyncNow(event, payload)
@@ -186,19 +197,38 @@ export class EventManager {
   }
 
   beginTransaction() {
-    this.transactionDepth++
+    const store = transactionStorage.getStore()
+    if (store) {
+      // depth is managed by DB.ts
+    } else {
+      this.transactionDepth++
+    }
   }
 
   async commitTransaction() {
-    if (this.transactionDepth > 0) this.transactionDepth--
-    if (this.transactionDepth > 0) return
-    const callbacks = this.deferredEvents.splice(0)
-    for (const callback of callbacks) await callback()
+    const store = transactionStorage.getStore()
+    if (store) {
+      if (store.depth > 0) store.depth--
+      if (store.depth > 0) return
+      const callbacks = store.deferredEvents.splice(0)
+      for (const callback of callbacks) await callback()
+    } else {
+      if (this.transactionDepth > 0) this.transactionDepth--
+      if (this.transactionDepth > 0) return
+      const callbacks = this.deferredEvents.splice(0)
+      for (const callback of callbacks) await callback()
+    }
   }
 
   rollBackTransaction() {
-    if (this.transactionDepth > 0) this.transactionDepth--
-    if (this.transactionDepth === 0) this.deferredEvents = []
+    const store = transactionStorage.getStore()
+    if (store) {
+      if (store.depth > 0) store.depth--
+      if (store.depth === 0) store.deferredEvents = []
+    } else {
+      if (this.transactionDepth > 0) this.transactionDepth--
+      if (this.transactionDepth === 0) this.deferredEvents = []
+    }
   }
 
   async discover(root = basePath()) {
@@ -250,7 +280,10 @@ export class EventManager {
   }
 
   private shouldDispatchAfterCommit(event: string | Record<string, any> | BroadcastableEvent) {
-    if (this.transactionDepth <= 0 || typeof event === 'string') return false
+    if (typeof event === 'string') return false
+    const store = transactionStorage.getStore()
+    const depth = store ? store.depth : this.transactionDepth
+    if (depth <= 0) return false
     return Boolean((event as any).afterCommit || (event as any).shouldDispatchAfterCommit)
   }
 

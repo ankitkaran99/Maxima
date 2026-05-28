@@ -19,6 +19,9 @@ Log.channel('single').info('Written to the single channel');
 Log.channel('error').error('Written to the error channel');
 ```
 
+> [!NOTE]
+> If the `console` channel is requested or set as the default, but is not explicitly defined in the logging configurations, Maxima will automatically define and instantiate a fallback console channel with a level of `debug` and pretty formatting enabled. This ensures that application processes and tests print output gracefully to stdout rather than throwing configuration errors.
+
 Supported channel drivers include `console`, `single`, `file`, `daily`, `stack`, `null`, `slack`, `webhook`, `papertrail`, `syslog`, and `errorlog`.
 
 Stacks combine multiple channels:

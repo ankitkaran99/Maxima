@@ -50,6 +50,9 @@ this.app.alias('billing', BillingService);
 const billing = await this.app.make('billing');
 ```
 
+> [!NOTE]
+> Maxima supports recursive alias chains (e.g. resolving `A` -> `B` -> `C` -> `ConcreteClass`). It also automatically detects and prevents circular dependency loops in aliases (e.g. `A` -> `B` -> `A`), throwing a clear `Circular alias dependency detected` error if a loop is formed.
+
 ---
 
 ## Resolving Instances

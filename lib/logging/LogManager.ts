@@ -131,7 +131,10 @@ export class LogManager {
 
   private createChannel(name: string): Logger {
     try {
-      const channel = config<Record<string, any>>(`logging.channels.${name}`)
+      let channel = config<Record<string, any>>(`logging.channels.${name}`)
+      if (!channel && name === 'console') {
+        channel = { driver: 'console', level: 'debug', pretty: true }
+      }
       if (!channel) throw new Error(`Log channel [${name}] is not configured.`)
       let logger = this.resolveChannel(channel)
       const tapNames = Array.isArray(channel.tap) ? channel.tap : (channel.tap ? [channel.tap] : [])

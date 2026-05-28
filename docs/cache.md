@@ -82,12 +82,16 @@ const value = await Cache.pull('key');
 // Clear all items in the current cache store
 await Cache.flush();
 
-// Store only if the key is missing
-await Cache.add('key', 'value', 300);
+// Store only if the key is missing (concurrency-safe and atomic in Redis and Database stores)
+const success = await Cache.add('key', 'value', 300); // returns boolean
 
 // Check for absence
 await Cache.missing('key');
 ```
+
+> [!TIP]
+> The `add()` method is atomic in `database` and `redis` drivers. In the `database` store, unique constraints on the primary key are checked directly to safely return `false` without throwing constraint violations. In the `redis` store, it is built on Redis's native atomic `SET ... NX` command.
+
 
 ### Retrieving & Storing: The `remember` Helper
 

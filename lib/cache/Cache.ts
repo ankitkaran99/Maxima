@@ -509,9 +509,27 @@ class RedisCacheStore implements CacheStore {
   }
 
   async add(key: string, value: any, ttlSeconds?: number): Promise<boolean> {
-    if (await this.has(key)) return false
-    await this.put(key, value, ttlSeconds)
-    return true
+    this.connect()
+    const rawVal = JSON.stringify(value)
+    const rawKey = this.rawKey(key)
+    try {
+      let res: any
+      if (ttlSeconds) {
+        res = await this.setAsync(rawKey, rawVal, 'NX', 'EX', ttlSeconds)
+      } else {
+        res = await this.setAsync(rawKey, rawVal, 'NX')
+      }
+      const succeeded = res === 'OK' || res === 1 || res === '1' || res === true
+      if (succeeded) {
+        Event.dispatch(new KeyWritten(key, value, ttlSeconds))
+        return true
+      }
+      return false
+    } catch {
+      if (await this.has(key)) return false
+      await this.put(key, value, ttlSeconds)
+      return true
+    }
   }
 
   async pull<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): Promise<T | undefined> {
@@ -717,8 +735,34 @@ export class DatabaseCacheStore implements CacheStore {
 
   async add(key: string, value: any, ttlSeconds?: number): Promise<boolean> {
     if (await this.has(key)) return false
-    await this.put(key, value, ttlSeconds)
-    return true
+    try {
+      const table = this.getTable()
+      const rKey = this.rawKey(key)
+      const rawVal = JSON.stringify(value)
+      const expiration = ttlSeconds ? Math.floor(Date.now() / 1000) + ttlSeconds : null
+
+      await DB.table(table).insert({
+        key: rKey,
+        value: rawVal,
+        expiration
+      })
+      Event.dispatch(new KeyWritten(key, value, ttlSeconds))
+      return true
+    } catch (error: any) {
+      const msg = error.message || String(error)
+      if (
+        msg.includes('UNIQUE') ||
+        msg.includes('constraint') ||
+        msg.includes('duplicate') ||
+        msg.includes('primary') ||
+        msg.includes('PK') ||
+        error.code === 'SQLITE_CONSTRAINT' ||
+        error.code === '23505'
+      ) {
+        return false
+      }
+      throw error
+    }
   }
 
   async pull<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): Promise<T | undefined> {

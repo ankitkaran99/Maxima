@@ -113,6 +113,7 @@ export class Response {
     const cookieOptions = sanitizeCookieOptions(options)
     if (typeof (this.reply as any).setCookie === 'function') {
       ;(this.reply as any).setCookie(name, payload, cookieOptions)
+      return this.reply
     }
     const serialized = serializeCookie(name, payload, options)
     const current = (this.reply as any).getHeader?.('Set-Cookie')

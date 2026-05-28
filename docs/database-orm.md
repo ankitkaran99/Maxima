@@ -106,6 +106,11 @@ DB.afterCommit(() => {
 });
 ```
 
+> [!NOTE]
+> Maxima isolates transaction contexts and `afterCommit` callbacks per asynchronous execution thread (e.g. per HTTP request or Queue job) using `AsyncLocalStorage`. This ensures that concurrent requests do not interfere with each other's transactions or callbacks.
+>
+> If `DB.afterCommit` is called when no transaction is active, the callback will be executed immediately.
+
 ---
 
 ## Eloquent Models

@@ -87,6 +87,19 @@ describe('Logging & Observability', () => {
     expect(() => Log.channel('missing').error('falls back')).not.toThrow()
   })
 
+  it('dynamically creates a console channel if not configured', () => {
+    const app = new Application(process.cwd())
+    app.config.set('logging', {
+      default: 'console',
+      channels: {}
+    })
+    setApplication(app)
+
+    expect(() => Log.channel('console')).not.toThrow()
+    const consoleChannel = Log.channel('console')
+    expect(consoleChannel).toBeDefined()
+  })
+
   it('provides Telescope/Pulse/Horizon/Scout/Pennant/Octane/Reverb/Boost equivalents', async () => {
     Telescope.record('request', { method: 'GET', url: '/health' })
     Telescope.record('job', { queue: 'default', job: 'ImportUsers', failed: true })

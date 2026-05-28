@@ -85,6 +85,22 @@ describe('Container', () => {
     expect(await container.make('db')).toEqual({ name: 'primary' })
   })
 
+  it('resolves recursive aliases and handles circular dependencies', async () => {
+    const container = new Container()
+    container.instance('database.connection', { name: 'primary' })
+    container.alias('db', 'database.connection')
+    container.alias('db-alias', 'db')
+    container.alias('db-alias-alias', 'db-alias')
+
+    expect(container.has('db-alias-alias')).toBe(true)
+    expect(await container.make('db-alias-alias')).toEqual({ name: 'primary' })
+
+    container.alias('circular-1', 'circular-2')
+    container.alias('circular-2', 'circular-1')
+
+    await expect(container.make('circular-1')).rejects.toThrow('Circular alias dependency detected')
+  })
+
   it('builds classes with declared constructor dependencies', async () => {
     const container = new Container()
     container.singleton(Dependency, () => new Dependency())

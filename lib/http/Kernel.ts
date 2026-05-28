@@ -247,8 +247,8 @@ export class HttpKernel {
       if (boundResult !== undefined) return this.respond(reply, boundResult)
 
       const result = await this.callAction(route.action, request, reply)
-      if ((request.raw as any).session?.commit) {
-        await (request.raw as any).session.commit(reply)
+      if (request.session?.commit) {
+        await request.session.commit(reply)
       }
       if (reply.sent) return
       return this.respond(reply, result)
@@ -487,16 +487,16 @@ export class HttpKernel {
           )
         )
         if (!acceptsJson) {
-          const session = (request.raw as any).session
+          const session = resolvedRequest.session
           if (session) {
             session.flashErrors(exception.errors, exception.errorBag)
-            session.flashInput(resolvedRequest.input())
+            session.flashInput(resolvedRequest.all())
           }
         }
       }
 
-      if ((request.raw as any).session?.commit) {
-        await (request.raw as any).session.commit(reply)
+      if (resolvedRequest.session?.commit) {
+        await resolvedRequest.session.commit(reply)
       }
 
       const rendered = await handler.render(exception, resolvedRequest, response)

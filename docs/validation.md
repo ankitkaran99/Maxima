@@ -62,6 +62,27 @@ const validator = Validator.make(request.all(), {
 const validated = await validator.validate();
 ```
 
+### Customizing Messages & Wildcards
+
+You can customize messages, attributes, and value replacers globally or inline. Maxima supports wildcard `*` syntax for nested array/object indices:
+
+```typescript
+const validated = await Validator.validate(request.all(), {
+  'users.*.email': schema.string().email()
+}, {
+  messages: {
+    // Matches users.0.email.email, users.1.email.email, etc.
+    'users.*.email.email': 'The :attribute must be valid.'
+  },
+  attributes: {
+    'users.*.email': 'user email'
+  }
+});
+```
+
+> [!NOTE]
+> Wildcard messages and attributes are matched segment-by-segment using clean regex patterns. The `*` wildcard only matches a single array index or object segment (preventing false matches across deeper levels of the request).
+
 ---
 
 ## Advanced Schema Rule Chains

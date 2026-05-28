@@ -283,6 +283,31 @@ describe('Database Layer', () => {
     expect(committed).toEqual(['committed'])
   })
 
+  it('isolates afterCommit callbacks and transaction events concurrently', async () => {
+    const listA: string[] = []
+    const listB: string[] = []
+
+    const p1 = DB.transaction(async trx => {
+      DB.afterCommit(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        listA.push('A_committed')
+      })
+      await trx('items').insert({ name: 'A' })
+    })
+
+    const p2 = DB.transaction(async trx => {
+      DB.afterCommit(async () => {
+        listB.push('B_committed')
+      })
+      await trx('items').insert({ name: 'B' })
+    })
+
+    await Promise.all([p1, p2])
+
+    expect(listA).toEqual(['A_committed'])
+    expect(listB).toEqual(['B_committed'])
+  })
+
   it('supports schema rename/drop helpers and framework table helpers', async () => {
     await Schema.rename('items', 'renamed_items')
     await Schema.renameColumn('renamed_items', 'name', 'title')

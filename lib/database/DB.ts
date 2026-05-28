@@ -1,6 +1,7 @@
 import knex, { type Knex } from 'knex'
 import { config } from '@lib/foundation/helpers.js'
 import { Telescope, Pulse } from '@lib/observability/Observability.js'
+import { transactionStorage, type TransactionState } from './TransactionContext.js'
 
 type QueryListener = (query: { sql: string, bindings?: unknown[], connection: string }) => void
 type AfterCommitCallback = () => void | Promise<void>
@@ -60,40 +61,98 @@ export class DatabaseManager {
   }
 
   afterCommit(callback: AfterCommitCallback) {
-    this.afterCommitCallbacks.push(callback)
+    const store = transactionStorage.getStore()
+    if (store) {
+      store.afterCommitCallbacks.push(callback)
+    } else {
+      void callback()
+    }
   }
 
   async transaction<T>(callback: (trx: Knex.Transaction) => Promise<T>) {
     const { Event } = await import('@lib/events/Event.js')
-    Event.beginTransaction()
-    try {
-      const result = await this.connection().transaction(callback)
-      await this.runAfterCommitCallbacks()
-      await Event.commitTransaction()
-      return result
-    } catch (error) {
-      Event.rollBackTransaction()
-      this.afterCommitCallbacks = []
-      throw error
-    }
+    const parentState = transactionStorage.getStore()
+    const state: TransactionState = parentState
+      ? {
+          depth: parentState.depth + 1,
+          deferredEvents: parentState.deferredEvents,
+          afterCommitCallbacks: parentState.afterCommitCallbacks
+        }
+      : {
+          depth: 1,
+          deferredEvents: [],
+          afterCommitCallbacks: []
+        }
+
+    return transactionStorage.run(state, async () => {
+      Event.beginTransaction()
+      try {
+        const result = await this.connection().transaction(callback)
+        await Event.commitTransaction()
+        if (!parentState) {
+          await this.runAfterCommitCallbacks(state.afterCommitCallbacks)
+        }
+        return result
+      } catch (error) {
+        Event.rollBackTransaction()
+        if (!parentState) {
+          state.afterCommitCallbacks = []
+        }
+        throw error
+      }
+    })
   }
 
   async beginTransaction(): Promise<Knex.Transaction> {
     const { Event } = await import('@lib/events/Event.js')
+    const parentState = transactionStorage.getStore()
+    const state: TransactionState = parentState
+      ? {
+          depth: parentState.depth + 1,
+          deferredEvents: parentState.deferredEvents,
+          afterCommitCallbacks: parentState.afterCommitCallbacks
+        }
+      : {
+          depth: 1,
+          deferredEvents: [],
+          afterCommitCallbacks: []
+        }
+
+    transactionStorage.enterWith(state)
     Event.beginTransaction()
     return this.connection().transaction()
   }
 
   async commit(trx: Knex.Transaction): Promise<void> {
     await trx.commit()
-    await this.runAfterCommitCallbacks()
+    
+    const state = transactionStorage.getStore()
+    const parentStateDepth = state ? state.depth - 1 : 0
+    
+    if (state) {
+      if (parentStateDepth === 0) {
+        await this.runAfterCommitCallbacks(state.afterCommitCallbacks)
+      }
+    } else {
+      await this.runAfterCommitCallbacks()
+    }
+    
     const { Event } = await import('@lib/events/Event.js')
     await Event.commitTransaction()
   }
 
   async rollBack(trx: Knex.Transaction): Promise<void> {
     await trx.rollback()
-    this.afterCommitCallbacks = []
+    
+    const state = transactionStorage.getStore()
+    if (state) {
+      if (state.depth === 1) {
+        state.afterCommitCallbacks = []
+      }
+    } else {
+      this.afterCommitCallbacks = []
+    }
+    
     const { Event } = await import('@lib/events/Event.js')
     Event.rollBackTransaction()
   }
@@ -111,8 +170,9 @@ export class DatabaseManager {
     for (const listener of this.listeners) listener(entry)
   }
 
-  private async runAfterCommitCallbacks() {
-    const callbacks = this.afterCommitCallbacks.splice(0)
+  private async runAfterCommitCallbacks(callbacksArray?: AfterCommitCallback[]) {
+    const list = callbacksArray ?? this.afterCommitCallbacks
+    const callbacks = list.splice(0)
     for (const callback of callbacks) await callback()
   }
 }

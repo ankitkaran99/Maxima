@@ -43,6 +43,12 @@ describe('Queue Redis Cache', () => {
 
     const application = new Application(process.cwd())
     setApplication(application)
+    application.config.set('logging', {
+      default: 'console',
+      channels: {
+        console: { driver: 'null' }
+      }
+    })
     application.config.set('queue', {
       default: 'redis-a',
       connections: {
