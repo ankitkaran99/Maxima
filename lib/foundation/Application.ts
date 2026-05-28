@@ -1,8 +1,9 @@
 import { Container, ServiceProvider } from '@lib/container/Container.js'
 import { ConfigRepository } from '@lib/config/ConfigRepository.js'
 import { EnvRepository } from '@lib/config/Env.js'
-import { configPath, basePath } from '@lib/support/paths.js'
+import { configPath, basePath, projectRoot } from '@lib/support/paths.js'
 import fsSync from 'node:fs'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -26,7 +27,7 @@ export class Application extends Container {
   }
 
   async bootstrap() {
-    this.env.load(basePath('.env'))
+    this.env.load(path.join(projectRoot(), '.env'))
     await this.config.load(configPath())
     
     const { registerGlobalHelpers } = await import('@lib/foundation/helpers.js')
@@ -40,9 +41,6 @@ export class Application extends Container {
 
     // Load and register all database factories
     const { Factory, FactoryRegistry } = await import('@lib/database/Factory.js')
-    const fs = await import('node:fs/promises')
-    const fsSync = await import('node:fs')
-    const path = await import('node:path')
     const { toFileUrl } = await import('@lib/support/paths.js')
 
     const factoriesPath = basePath('database', 'factories')

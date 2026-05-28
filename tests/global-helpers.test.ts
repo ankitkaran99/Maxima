@@ -53,8 +53,8 @@ describe('Global Helpers', () => {
         expect(basePath()).toBe(srcDir)
         expect(configPath('app.ts')).toBe(path.join(srcDir, 'config', 'app.ts'))
         expect(databasePath('database.sqlite')).toBe(path.join(srcDir, 'database', 'database.sqlite'))
-        expect(storagePath('logs/maxima.log')).toBe(path.join(srcDir, 'storage', 'logs', 'maxima.log'))
-        expect(publicPath('assets')).toBe(path.join(srcDir, 'public', 'assets'))
+        expect(storagePath('logs/maxima.log')).toBe(path.join(tempRoot, 'storage', 'logs', 'maxima.log'))
+        expect(publicPath('assets')).toBe(path.join(tempRoot, 'public', 'assets'))
       } finally {
         process.env.MAXIMA_BASE_PATH = originalBasePath
         await fs.rm(tempRoot, { recursive: true, force: true })

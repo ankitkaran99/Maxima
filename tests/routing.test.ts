@@ -243,7 +243,8 @@ describe('Routing API', () => {
 
   it('supports redirect and view route shortcuts', async () => {
     const { ViewFactory } = await import('@lib/view/ViewFactory.js')
-    app.instance(ViewFactory, new ViewFactory(path.join(app.rootPath, 'resources')))
+    const { resourcePath } = await import('@lib/support/paths.js')
+    app.instance(ViewFactory, new ViewFactory(resourcePath()))
 
     Route.redirect('/old-path', '/new-path', 302)
     Route.view('/welcome-view', 'home', { name: 'Ada' })
@@ -1461,7 +1462,7 @@ describe('HTTP & Routing Extras', () => {
     // Run route:cache CLI command
     await runCliCommand(['route:cache'])
 
-    const cachePath = path.join(root, 'src', 'storage', 'framework', 'routes.json')
+    const cachePath = path.join(root, 'storage', 'framework', 'routes.json')
     expect(fsSync.existsSync(cachePath)).toBe(true)
 
     // Clear all routes from memory

@@ -13,7 +13,7 @@ afterEach(() => {
   Pulse.clear?.()
   Scout.flush?.()
   Pennant.forget?.()
-  fs.rmSync(path.join(process.cwd(), 'src', 'storage', 'logs', 'emergency.log'), { force: true })
+  fs.rmSync(path.join(process.cwd(), 'storage', 'logs', 'emergency.log'), { force: true })
 })
 
 describe('Logging & Observability', () => {

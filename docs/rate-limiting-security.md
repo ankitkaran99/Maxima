@@ -1,7 +1,30 @@
 # Rate Limiting And Security Middleware
 
-Maxima includes named rate limiters and several built-in security middleware aliases.
+Maxima includes a global rate limiter as well as named route-level limiters and built-in security middleware aliases.
 
+## Global Rate Limiting
+
+By default, Maxima registers a global rate limiter that applies to all incoming requests. This provides base protection for your application out-of-the-box.
+
+The global rate limiter can be configured or disabled in `src/config/rateLimit.ts` via the `global` options:
+
+- `enabled`: Toggle global rate limiting. Defaults to `true`. Can be set via the `RATE_LIMIT_ENABLED` environment variable.
+- `max`: The maximum number of requests allowed. Defaults to `60`. Can be set via the `RATE_LIMIT_MAX` environment variable.
+- `timeWindow`: The duration of the rate limit window. Defaults to `1 minute`. Can be set via the `RATE_LIMIT_WINDOW` environment variable.
+
+Example `.env` configuration for local development or benchmarking:
+```env
+# Disable global rate limiting
+RATE_LIMIT_ENABLED=false
+
+# Or increase the threshold
+RATE_LIMIT_MAX=5000
+RATE_LIMIT_WINDOW="1 minute"
+```
+
+## Route-Level Named Limiters
+
+To define specific limiters for routes, import the helpers:
 ```typescript
 import { Limit, RateLimiter } from '@lib/http/RateLimiter.js';
 ```

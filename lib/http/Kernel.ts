@@ -65,7 +65,11 @@ export class HttpKernel {
     if (corsConfig !== false) await this.server.register(cors, corsConfig)
     await this.server.register(helmet, config('security.helmet', {}))
     await this.server.register(multipart)
-    await this.server.register(rateLimit, config('rateLimit.global', { max: 60, timeWindow: '1 minute' }))
+    const rateLimitConfig = config<any>('rateLimit.global', { max: 60, timeWindow: '1 minute' })
+    if (rateLimitConfig && rateLimitConfig.enabled !== false) {
+      const { enabled, ...options } = rateLimitConfig
+      await this.server.register(rateLimit, options)
+    }
     if (fs.existsSync(publicPath())) {
       await this.server.register(staticFiles, { root: publicPath(), prefix: '/assets/', decorateReply: false })
     }
@@ -549,7 +553,20 @@ export class HttpKernel {
   private async renderErrorPage(reply: FastifyReply, statusCode: number, template: string, data: Record<string, unknown>) {
     try {
       const { ViewFactory } = await import('@lib/view/ViewFactory.js')
-      const viewFactory = await this.app.make<any>(ViewFactory)
+      let viewFactory = await this.app.make<any>(ViewFactory)
+      if (!viewFactory.exists(template)) {
+        let frameworkRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+        if (path.basename(frameworkRoot) === 'dist') {
+          frameworkRoot = path.dirname(frameworkRoot)
+        }
+        const bundledViews = fs.existsSync(path.join(frameworkRoot, 'src', 'resources'))
+          ? path.join(frameworkRoot, 'src', 'resources')
+          : path.join(frameworkRoot, 'resources')
+        const bundledTemplate = path.join(bundledViews, 'views', template.replaceAll('.', '/') + '.edge')
+        if (fs.existsSync(bundledTemplate)) {
+          viewFactory = new ViewFactory(bundledViews, storagePath('framework/views'))
+        }
+      }
       const html = await viewFactory.render(template, data)
       return reply.code(statusCode).type('text/html').send(html)
     } catch {
@@ -566,7 +583,9 @@ export class HttpKernel {
         if (path.basename(frameworkRoot) === 'dist') {
           frameworkRoot = path.dirname(frameworkRoot)
         }
-        const bundledViews = path.join(frameworkRoot, 'src', 'resources')
+        const bundledViews = fs.existsSync(path.join(frameworkRoot, 'src', 'resources'))
+          ? path.join(frameworkRoot, 'src', 'resources')
+          : path.join(frameworkRoot, 'resources')
         const bundledTemplate = path.join(bundledViews, 'views', 'errors', 'debug.edge')
         if (fs.existsSync(bundledTemplate)) {
           viewFactory = new ViewFactory(bundledViews, storagePath('framework/views'))

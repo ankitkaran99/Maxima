@@ -474,11 +474,10 @@ export class ViewFactory {
 
     let promise = this.compilationPromises.get(file)
     if (!promise) {
-      promise = this.doCompileTemplate(file, template)
-      this.compilationPromises.set(file, promise)
-      promise.finally(() => {
+      promise = this.doCompileTemplate(file, template).finally(() => {
         this.compilationPromises.delete(file)
       })
+      this.compilationPromises.set(file, promise)
     }
     const compiled = await promise
     if (isProduction) {

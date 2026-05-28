@@ -27,16 +27,37 @@ export function databasePath(...segments: string[]) {
   return basePath('database', ...segments)
 }
 
+export function projectRoot() {
+  const appRoot = applicationRoot()
+  const basename = path.basename(appRoot).toLowerCase()
+  if (basename === 'src') {
+    const parent = path.dirname(appRoot)
+    if (path.basename(parent).toLowerCase() === 'dist') {
+      return path.dirname(parent)
+    }
+    return parent
+  }
+  return appRoot
+}
+
 export function resourcePath(...segments: string[]) {
-  return basePath('resources', ...segments)
+  const appRoot = applicationRoot()
+  if (fs.existsSync(path.join(appRoot, 'resources'))) {
+    return path.resolve(appRoot, 'resources', ...segments)
+  }
+  const srcResources = path.resolve(projectRoot(), 'src', 'resources')
+  if (fs.existsSync(srcResources)) {
+    return path.resolve(srcResources, ...segments)
+  }
+  return path.resolve(projectRoot(), 'resources', ...segments)
 }
 
 export function storagePath(...segments: string[]) {
-  return path.resolve(applicationRoot(), 'storage', ...segments)
+  return path.resolve(projectRoot(), 'storage', ...segments)
 }
 
 export function publicPath(...segments: string[]) {
-  return basePath('public', ...segments)
+  return path.resolve(projectRoot(), 'public', ...segments)
 }
 
 export function toFileUrl(file: string) {

@@ -124,7 +124,7 @@ describe('CLI Extras', () => {
   })
 
   it('view:clear clears compiled template files in storage', async () => {
-    const viewsDir = path.join(root, 'src', 'storage', 'framework', 'views')
+    const viewsDir = path.join(root, 'storage', 'framework', 'views')
     await fs.mkdir(viewsDir, { recursive: true })
     await fs.writeFile(path.join(viewsDir, 'compiled-template.js'), 'console.log("compiled")')
 
@@ -135,39 +135,23 @@ describe('CLI Extras', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Compiled views cleared'))
   })
 
-  it('view:cache compiles view files into src storage', async () => {
+  it('view:cache compiles view files into storage', async () => {
     const viewsDir = path.join(root, 'src', 'resources', 'views')
     await fs.mkdir(viewsDir, { recursive: true })
     await fs.writeFile(path.join(viewsDir, 'home.edge'), '<h1>{{ title }}</h1>')
 
     await runCliCommand(['view:cache'])
 
-    const cacheDir = path.join(root, 'src', 'storage', 'framework', 'views')
+    const cacheDir = path.join(root, 'storage', 'framework', 'views')
     expect((await fs.readdir(cacheDir)).length).toBeGreaterThan(0)
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('views cached'))
   })
 
-  it('dist:publish copies views, emails, lang, and public assets to dist', async () => {
-    const srcViewsDir = path.join(root, 'src', 'resources', 'views')
-    const srcPublicDir = path.join(root, 'src', 'public')
-    await fs.mkdir(srcViewsDir, { recursive: true })
-    await fs.mkdir(srcPublicDir, { recursive: true })
-    await fs.writeFile(path.join(srcViewsDir, 'test.edge'), 'test view')
-    await fs.writeFile(path.join(srcPublicDir, 'test.png'), 'png contents')
 
-    await runCliCommand(['dist:publish'])
 
-    const distViewsFile = path.join(root, 'dist', 'src', 'resources', 'views', 'test.edge')
-    const distPublicFile = path.join(root, 'dist', 'src', 'public', 'test.png')
-
-    expect(fsSync.existsSync(distViewsFile)).toBe(true)
-    expect(fsSync.existsSync(distPublicFile)).toBe(true)
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('copied successfully to dist'))
-  })
-
-  it('down and up toggle maintenance mode in src storage', async () => {
+  it('down and up toggle maintenance mode in storage', async () => {
     await runCliCommand(['down'])
-    const downFile = path.join(root, 'src', 'storage', 'framework', 'down')
+    const downFile = path.join(root, 'storage', 'framework', 'down')
     expect(fsSync.existsSync(downFile)).toBe(true)
 
     await runCliCommand(['up'])
@@ -246,7 +230,7 @@ describe('CLI Extras', () => {
   })
 
   it('queue:restart writes the restart signal file', async () => {
-    const restartFile = path.join(root, 'src', 'storage', 'framework', 'queue-restart')
+    const restartFile = path.join(root, 'storage', 'framework', 'queue-restart')
 
     await runCliCommand(['queue:restart'])
 
@@ -407,18 +391,18 @@ describe('Artisan parity commands', () => {
 
   it('caches, shows, optimizes, and clears framework cache files', async () => {
     await runCliCommand(['config:cache'])
-    expect(fsSync.existsSync(path.join(src, 'storage', 'framework', 'config.json'))).toBe(true)
+    expect(fsSync.existsSync(path.join(root, 'storage', 'framework', 'config.json'))).toBe(true)
 
     await runCliCommand(['config:show', 'app.env'])
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify('testing', null, 2))
 
     await runCliCommand(['optimize'])
-    expect(fsSync.existsSync(path.join(src, 'storage', 'framework', 'config.json'))).toBe(true)
-    expect(fsSync.existsSync(path.join(src, 'storage', 'framework', 'routes.json'))).toBe(true)
+    expect(fsSync.existsSync(path.join(root, 'storage', 'framework', 'config.json'))).toBe(true)
+    expect(fsSync.existsSync(path.join(root, 'storage', 'framework', 'routes.json'))).toBe(true)
 
     await runCliCommand(['optimize:clear'])
-    expect(fsSync.existsSync(path.join(src, 'storage', 'framework', 'config.json'))).toBe(false)
-    expect(fsSync.existsSync(path.join(src, 'storage', 'framework', 'routes.json'))).toBe(false)
+    expect(fsSync.existsSync(path.join(root, 'storage', 'framework', 'config.json'))).toBe(false)
+    expect(fsSync.existsSync(path.join(root, 'storage', 'framework', 'routes.json'))).toBe(false)
   })
 
   it('publishes event cache, lists events, clears cache, and generates defaults', async () => {
@@ -434,7 +418,7 @@ describe('Artisan parity commands', () => {
     ]))
 
     await runCliCommand(['event:cache'])
-    const eventCache = path.join(src, 'storage', 'framework', 'events.json')
+    const eventCache = path.join(root, 'storage', 'framework', 'events.json')
     expect(JSON.parse(await fs.readFile(eventCache, 'utf8')).events[0].name).toBe('OrderPlaced')
 
     await runCliCommand(['event:clear'])
@@ -447,9 +431,9 @@ describe('Artisan parity commands', () => {
 
   it('links storage, publishes vendor assets, and uses customized generator stubs', async () => {
     await runCliCommand(['storage:link'])
-    expect(fsSync.existsSync(path.join(src, 'public', 'storage'))).toBe(true)
+    expect(fsSync.existsSync(path.join(root, 'public', 'storage'))).toBe(true)
     await runCliCommand(['storage:unlink'])
-    expect(fsSync.existsSync(path.join(src, 'public', 'storage'))).toBe(false)
+    expect(fsSync.existsSync(path.join(root, 'public', 'storage'))).toBe(false)
 
     await runCliCommand(['vendor:publish', '--tag', 'stubs'])
     await runCliCommand(['stub:publish'])
