@@ -464,5 +464,43 @@ describe('Validator', () => {
       expect(res4.status).toBe(403)
       expect(res4.body.message).toContain('Invalid or expired signature')
     })
+
+    it('redirects back with validation errors and old input for HTML requests', async () => {
+      const { SessionMiddleware } = await import('@lib/http/SecurityMiddleware.js')
+      app.config.set('middleware.aliases', {
+        session: SessionMiddleware
+      })
+      app.config.set('session', {
+        driver: 'cookie',
+        lifetime: 120,
+        cookie: { name: 'maxima_session', httpOnly: true, secure: false, sameSite: 'lax', path: '/' }
+      })
+
+      Route.post('/submit-form', (req) => {
+        return { ok: true }
+      }).middleware('session')
+        .validate({
+          body: {
+            email: schema.string().email(),
+            age: schema.integer()
+          }
+        })
+
+      await kernel.bootstrap()
+      const server = kernel.getFastify().server
+
+      const res = await supertest(server)
+        .post('/submit-form')
+        .set('Accept', 'text/html')
+        .set('Referer', '/form-page')
+        .send({ email: 'invalid-email', age: 'not-an-integer' })
+
+      expect(res.status).toBe(302)
+      expect(res.header.location).toBe('/form-page')
+
+      const cookie = res.headers['set-cookie']?.find((c: string) => c.startsWith('maxima_session='))
+      expect(cookie).toBeDefined()
+    })
   })
 })
+

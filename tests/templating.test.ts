@@ -242,6 +242,50 @@ describe('Templating', () => {
     await expect(renderFragment('fragmented', 'preview', { name: 'Helper' })).resolves.toContain('Preview Helper')
   })
 
+  it('supports nesting of switch, error, and session directives correctly', async () => {
+    await fs.writeFile(path.join(root, 'resources', 'views', 'nested-directives.edge'), `
+      @switch(outer)
+        @case('a')
+          @switch(inner)
+            @case('b') AB @break
+            @default AD @break
+          @endswitch
+          @break
+        @default Other @break
+      @endswitch
+
+      @session('outer-session')
+        OuterSession
+        @session('inner-session')
+          InnerSession
+        @endsession
+      @endsession
+
+      @error('outer-error')
+        OuterError
+        @error('inner-error')
+          InnerError
+        @enderror
+      @enderror
+    `)
+
+    const factory = new ViewFactory(path.join(root, 'resources'))
+    const html = await factory.render('nested-directives', {
+      outer: 'a',
+      inner: 'b',
+      session: { 'outer-session': true, 'inner-session': true },
+      errors: { 'outer-error': 'Outer', 'inner-error': 'Inner' }
+    })
+
+    expect(html.trim()).toContain('AB')
+    expect(html.trim()).not.toContain('Other')
+    expect(html.trim()).toContain('OuterSession')
+    expect(html.trim()).toContain('InnerSession')
+    expect(html.trim()).toContain('OuterError')
+    expect(html.trim()).toContain('InnerError')
+  })
+
+
   it('invalidates compiled view cache when the source mtime changes', async () => {
     const cacheDir = path.join(root, 'storage', 'framework', 'views')
     await fs.writeFile(path.join(root, 'resources', 'views', 'cached.edge'), 'First')

@@ -211,6 +211,68 @@ export class ViewFactory {
       .replace(/\{\{--[\s\S]*?--\}\}/g, '')
 
     contents = this.compileSwitches(contents)
+
+    // Compile nested block directives from inside out
+    const blockDirectives = [
+      {
+        regex: /@auth(?:\([^)]*\))?\b((?:(?!@auth(?:\([^)]*\))?\b)[\s\S])*?)@endauth\b/g,
+        replacement: '@if(authUser)\n$1\n@endif'
+      },
+      {
+        regex: /@guest(?:\([^)]*\))?\b((?:(?!@guest(?:\([^)]*\))?\b)[\s\S])*?)@endguest\b/g,
+        replacement: '@if(!authUser)\n$1\n@endif'
+      },
+      {
+        regex: /@can\(([^)]*)\)((?:(?!@can\b)[\s\S])*?)@endcan\b/g,
+        replacement: '@if(await Gate.allows($1))\n$2\n@endif'
+      },
+      {
+        regex: /@cannot\(([^)]*)\)((?:(?!@cannot\b)[\s\S])*?)@endcannot\b/g,
+        replacement: '@if(await Gate.denies($1))\n$2\n@endif'
+      },
+      {
+        regex: /@canany\(([^)]*)\)((?:(?!@canany\b)[\s\S])*?)@endcanany\b/g,
+        replacement: '@if(await __canAny($1))\n$2\n@endif'
+      },
+      {
+        regex: /@isset\(([^)]*)\)((?:(?!@isset\b)[\s\S])*?)@endisset\b/g,
+        replacement: '@if(($1) !== undefined && ($1) !== null)\n$2\n@endif'
+      },
+      {
+        regex: /@empty\(([^)]*)\)((?:(?!@empty\b)[\s\S])*?)@endempty\b/g,
+        replacement: '@if(__isEmpty($1))\n$2\n@endif'
+      },
+      {
+        regex: /@production\b((?:(?!@production\b)[\s\S])*?)@endproduction\b/g,
+        replacement: '@if(__isEnvironment("production"))\n$1\n@endif'
+      },
+      {
+        regex: /@env\(([^)]*)\)((?:(?!@env\b)[\s\S])*?)@endenv\b/g,
+        replacement: '@if(__isEnvironment($1))\n$2\n@endif'
+      },
+      {
+        regex: /@session\(([^)]*)\)((?:(?!@session\b)[\s\S])*?)@endsession\b/g,
+        replacement: '@if(session && session[$1] !== undefined)\n$2\n@endif'
+      },
+      {
+        regex: /@error\(([^)]*)\)((?:(?!@error\b)[\s\S])*?)@enderror\b/g,
+        replacement: '@if(errors && errors[$1])\n@set("message", Array.isArray(errors[$1]) ? errors[$1][0] : errors[$1])\n$2\n@endif'
+      }
+    ]
+
+    for (const directive of blockDirectives) {
+      while (directive.regex.test(contents)) {
+        directive.regex.lastIndex = 0
+        contents = contents.replace(directive.regex, directive.replacement)
+      }
+    }
+
+    const fragmentRegex = /@fragment\(([^)]*)\)((?:(?!@fragment\b)[\s\S])*?)@endfragment\b/g
+    while (fragmentRegex.test(contents)) {
+      fragmentRegex.lastIndex = 0
+      contents = contents.replace(fragmentRegex, '$2')
+    }
+
     contents = contents
       .replace(/@once\b([\s\S]*?)@endonce\b/g, (_match, body) => {
         const key = `once:${onceIndex++}`
@@ -219,36 +281,8 @@ export class ViewFactory {
       .replace(/@ignore\b([\s\S]*?)@endignore\b/g, (_match, body) => body.replaceAll('@', '&#64;'))
       .replace(/@parent\b/g, '@super')
       .replace(/@show\b|@overwrite\b|@append\b/g, '@endsection')
-      .replace(/@auth(?:\([^)]*\))?\b([\s\S]*?)@endauth\b/g, '@if(authUser)\n$1\n@endif')
-      .replace(/@guest(?:\([^)]*\))?\b([\s\S]*?)@endguest\b/g, '@if(!authUser)\n$1\n@endif')
-      .replace(/@can\(([^)]*)\)([\s\S]*?)@endcan\b/g, '@if(await Gate.allows($1))\n$2\n@endif')
-      .replace(/@cannot\(([^)]*)\)([\s\S]*?)@endcannot\b/g, '@if(await Gate.denies($1))\n$2\n@endif')
-      .replace(/@canany\(([^)]*)\)([\s\S]*?)@endcanany\b/g, '@if(await __canAny($1))\n$2\n@endif')
-      .replace(/@isset\(([^)]*)\)([\s\S]*?)@endisset\b/g, '@if(($1) !== undefined && ($1) !== null)\n$2\n@endif')
-      .replace(/@empty\(([^)]*)\)([\s\S]*?)@endempty\b/g, '@if(__isEmpty($1))\n$2\n@endif')
-      .replace(/@production\b([\s\S]*?)@endproduction\b/g, '@if(__isEnvironment("production"))\n$1\n@endif')
-      .replace(/@env\(([^)]*)\)([\s\S]*?)@endenv\b/g, '@if(__isEnvironment($1))\n$2\n@endif')
-      .replace(/@session\(([^)]*)\)([\s\S]*?)@endsession\b/g, '@if(session && session[$1] !== undefined)\n$2\n@endif')
-      .replace(/@error\(([^)]*)\)([\s\S]*?)@enderror\b/g, '@if(errors && errors[$1])\n@set("message", Array.isArray(errors[$1]) ? errors[$1][0] : errors[$1])\n$2\n@endif')
-      .replace(/@auth(?:\([^)]*\))?\b/g, '@if(authUser)')
-      .replace(/@endauth\b/g, '@endif')
-      .replace(/@guest(?:\([^)]*\))?\b/g, '@if(!authUser)')
-      .replace(/@endguest\b/g, '@endif')
-      .replace(/@can\(([^)]*)\)/g, '@if(await Gate.allows($1))')
-      .replace(/@cannot\(([^)]*)\)/g, '@if(await Gate.denies($1))')
-      .replace(/@canany\(([^)]*)\)/g, '@if(await __canAny($1))')
       .replace(/@elsecan\(([^)]*)\)/g, '@elseif(await Gate.allows($1))')
       .replace(/@elsecannot\(([^)]*)\)/g, '@elseif(await Gate.denies($1))')
-      .replace(/@endcan\b|@endcannot\b|@endcanany\b/g, '@endif')
-      .replace(/@isset\(([^)]*)\)/g, '@if(($1) !== undefined && ($1) !== null)')
-      .replace(/@endisset\b/g, '@endif')
-      .replace(/@empty\(([^)]*)\)/g, '@if(__isEmpty($1))')
-      .replace(/@endempty\b/g, '@endif')
-      .replace(/@production\b/g, '@if(__isEnvironment("production"))')
-      .replace(/@endproduction\b/g, '@endif')
-      .replace(/@env\(([^)]*)\)/g, '@if(__isEnvironment($1))')
-      .replace(/@endenv\b/g, '@endif')
-      .replace(/@fragment\(([^)]*)\)([\s\S]*?)@endfragment\b/g, '$2')
       .replace(/@lang\(([^)]*)\)/g, '{{ await trans($1) }}')
       .replace(/@choice\(([^)]*)\)/g, '{{ await transChoice($1) }}')
       .replace(/@json\(([^)]*)\)/g, '{{{ __json($1) }}}')
@@ -490,16 +524,22 @@ export class ViewFactory {
 
   private compileSwitches(contents: string) {
     let index = 0
-    return contents.replace(/@switch\(([^)]*)\)([\s\S]*?)@endswitch\b/g, (_match, expression, body) => {
-      const cases = [...body.matchAll(/@(case|default)(?:\(([^)]*)\))?([\s\S]*?)(?=@case\(|@default\b|$)/g)]
-      let output = ''
-      for (const [caseIndex, item] of cases.entries()) {
-        const caseBody = item[3].replace(/@break\b/g, '')
-        if (item[1] === 'default') output += `${caseIndex === 0 ? '@else' : '@else'}\n${caseBody}`
-        else output += `${caseIndex === 0 ? '@if' : '@elseif'}(__switch${index} === ${item[2]})\n${caseBody}`
-      }
-      return `@set("__switch${index}", ${expression})\n${output}\n@endif`
-    })
+    const regex = /@switch\(((?:[^()]+|\([^()]*\))*)\)((?:(?!@switch\b)[\s\S])*?)@endswitch\b/g
+    while (regex.test(contents)) {
+      regex.lastIndex = 0
+      contents = contents.replace(regex, (_match, expression, body) => {
+        const currentIdx = index++
+        const cases = [...body.matchAll(/@(case|default)(?:\(([^)]*)\))?([\s\S]*?)(?=@case\(|@default\b|$)/g)]
+        let output = ''
+        for (const [caseIndex, item] of cases.entries()) {
+          const caseBody = item[3].replace(/@break\b/g, '')
+          if (item[1] === 'default') output += `${caseIndex === 0 ? '@else' : '@else'}\n${caseBody}`
+          else output += `${caseIndex === 0 ? '@if' : '@elseif'}(__switch${currentIdx} === ${item[2]})\n${caseBody}`
+        }
+        return `@set("__switch${currentIdx}", ${expression})\n${output}\n@endif`
+      })
+    }
+    return contents
   }
 
 }

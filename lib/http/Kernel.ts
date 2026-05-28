@@ -476,6 +476,29 @@ export class HttpKernel {
       const handler = await this.exceptionHandler()
 
       await handler.report(exception, resolvedRequest)
+
+      if (exception instanceof ValidationException) {
+        const acceptsHtml = request.headers.accept?.includes('text/html')
+        const acceptsJson = request.url.startsWith('/api') || (
+          !acceptsHtml && (
+            resolvedRequest.expectsJson() ||
+            request.headers.accept?.includes('application/json') ||
+            (request.headers['content-type'] as string | undefined)?.includes('application/json')
+          )
+        )
+        if (!acceptsJson) {
+          const session = (request.raw as any).session
+          if (session) {
+            session.flashErrors(exception.errors, exception.errorBag)
+            session.flashInput(resolvedRequest.input())
+          }
+        }
+      }
+
+      if ((request.raw as any).session?.commit) {
+        await (request.raw as any).session.commit(reply)
+      }
+
       const rendered = await handler.render(exception, resolvedRequest, response)
       if (reply.sent) return
       if (rendered !== undefined) return this.respond(reply, rendered)
@@ -493,9 +516,20 @@ export class HttpKernel {
 
   private renderDefaultError(error: Error, request: FastifyRequest, reply: FastifyReply) {
     const maximaRequest = (request as any).maximaRequest as Request | undefined
-    const acceptsJson = request.url.startsWith('/api') || maximaRequest?.expectsJson() || request.headers.accept?.includes('application/json')
+    const acceptsHtml = request.headers.accept?.includes('text/html')
+    const acceptsJson = request.url.startsWith('/api') || (
+      !acceptsHtml && (
+        maximaRequest?.expectsJson() ||
+        request.headers.accept?.includes('application/json') ||
+        (request.headers['content-type'] as string | undefined)?.includes('application/json')
+      )
+    )
     if (error instanceof ValidationException) {
-      return reply.code(422).send({ message: 'Validation failed', errors: error.errors })
+      if (acceptsJson) {
+        return reply.code(422).send({ message: 'Validation failed', errors: error.errors })
+      }
+      const redirectUrl = error.redirectTo ?? (maximaRequest?.headers['referer'] as string | undefined) ?? '/'
+      return reply.redirect(redirectUrl)
     }
     if (error instanceof AuthorizationException) {
       if (acceptsJson) return reply.code(403).send({ message: error.message })
@@ -528,7 +562,11 @@ export class HttpKernel {
       const { ViewFactory } = await import('@lib/view/ViewFactory.js')
       let viewFactory = await this.app.make<any>(ViewFactory)
       if (!viewFactory.exists('errors.debug')) {
-        const bundledViews = path.join(process.cwd(), 'src', 'resources')
+        let frameworkRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+        if (path.basename(frameworkRoot) === 'dist') {
+          frameworkRoot = path.dirname(frameworkRoot)
+        }
+        const bundledViews = path.join(frameworkRoot, 'src', 'resources')
         const bundledTemplate = path.join(bundledViews, 'views', 'errors', 'debug.edge')
         if (fs.existsSync(bundledTemplate)) {
           viewFactory = new ViewFactory(bundledViews, storagePath('framework/views'))
@@ -547,7 +585,13 @@ export class HttpKernel {
 
   private buildDebugErrorData(error: Error, request: Request, statusCode: number) {
     const frames = this.parseStack(error.stack ?? '')
-    const source = frames[0] ? this.readSourceFrame(frames[0]) : null
+    let source = frames[0] ? this.readSourceFrame(frames[0]) : null
+    if (!source && (request.raw as any).currentRoute) {
+      const fallbackFrame = this.findControllerSourceFrame((request.raw as any).currentRoute)
+      if (fallbackFrame) {
+        source = this.readSourceFrame(fallbackFrame)
+      }
+    }
     return {
       statusCode,
       errorName: error.name,
@@ -571,6 +615,55 @@ export class HttpKernel {
       stack: error.stack ?? ''
     }
   }
+
+  private findControllerSourceFrame(route: RouteDefinition) {
+    if (!route || !Array.isArray(route.action)) return null
+    const [ControllerClass, method] = route.action
+    if (typeof ControllerClass !== 'function') return null
+    const className = ControllerClass.name
+    if (!className) return null
+
+    const controllersDir = path.join(this.app.rootPath, 'app', 'Http', 'Controllers')
+    if (!fs.existsSync(controllersDir)) return null
+
+    const findFile = (dir: string, targetName: string): string | null => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          const found = findFile(fullPath, targetName)
+          if (found) return found
+        } else if (entry.isFile() && (entry.name === `${targetName}.ts` || entry.name === `${targetName}.js`)) {
+          return fullPath
+        }
+      }
+      return null
+    }
+
+    const file = findFile(controllersDir, className)
+    if (!file) return null
+
+    let lineNumber = 1
+    try {
+      const content = fs.readFileSync(file, 'utf8')
+      const lines = content.split(/\r?\n/)
+      const methodRegex = new RegExp(`(?:async\\s+)?${method}\\s*\\(`)
+      for (let i = 0; i < lines.length; i++) {
+        if (methodRegex.test(lines[i])) {
+          lineNumber = i + 1
+          break
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    return {
+      file,
+      line: lineNumber
+    }
+  }
+
 
   private parseStack(stack: string) {
     return stack
@@ -599,10 +692,11 @@ export class HttpKernel {
   }
 
   private isInternalStackFile(file: string) {
+    const frameworkLib = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
     return file.startsWith('node:') || 
            file.includes(`${path.sep}node_modules${path.sep}`) || 
            file.includes(`${path.sep}internal${path.sep}`) ||
-           file.includes(`${path.sep}lib${path.sep}`)
+           file.startsWith(frameworkLib)
   }
 
   private relativeStackFile(file: string) {

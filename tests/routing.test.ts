@@ -1516,6 +1516,43 @@ describe('HTTP & Routing Extras', () => {
     expect(response.body).toContain('string boom')
   })
 
+  it('renders a debug page highlighting the controller when a string is thrown in a controller method', async () => {
+    app.config.set('app.debug', true)
+    const { pathToFileURL } = await import('node:url')
+
+    // Write a dummy controller file
+    const controllersDir = path.join(root, 'src', 'app', 'Http', 'Controllers')
+    await fs.mkdir(controllersDir, { recursive: true })
+    const controllerFilePath = path.join(controllersDir, 'DummyExceptionController.ts')
+    await fs.writeFile(
+      controllerFilePath,
+      `import { Controller } from '@lib/http/Controller.js'
+export class DummyExceptionController extends Controller {
+  async boom() {
+    throw 'controller string boom'
+  }
+}`
+    )
+
+    // Import the controller class reference dynamically
+    const { DummyExceptionController } = await import(pathToFileURL(controllerFilePath).href)
+
+    Route.get('/debug-controller-string', [DummyExceptionController, 'boom'])
+
+    const kernel = new HttpKernel(app)
+    await kernel.bootstrap({ loadRoutes: false })
+
+    const response = await kernel.server.inject({ method: 'GET', url: '/debug-controller-string' })
+
+    expect(response.statusCode).toBe(500)
+    expect(response.headers['content-type']).toContain('text/html')
+    expect(response.body).toContain('Application Error')
+    expect(response.body).toContain('controller string boom')
+    expect(response.body).toContain('DummyExceptionController.ts')
+    expect(response.body).toContain('async boom()')
+  })
+
+
   it('supports controller method model injection', async () => {
     const { Schema } = await import('@lib/database/Schema.js')
     const { DB } = await import('@lib/database/DB.js')
