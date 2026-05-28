@@ -1,4 +1,4 @@
-import { Queue, type Job } from '@lib/queue/Queue.js'
+import { Queue, SerializableRegistry, type Job } from '@lib/queue/Queue.js'
 import { Broadcast, type BroadcastableEvent } from '@lib/broadcast/Broadcast.js'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -52,6 +52,7 @@ export class EventManager {
     const bucket = this.listeners.get(eventName) ?? []
     bucket.push(listener)
     this.listeners.set(eventName, bucket)
+    this.registerSerializableListener(listener)
     return this
   }
 
@@ -211,6 +212,7 @@ export class EventManager {
       const mod = await import(`${pathToFileURL(file).href}?t=${Date.now()}`)
       const Listener = mod.default ?? Object.values(mod).find(value => typeof value === 'function')
       if (typeof Listener !== 'function') continue
+      this.registerSerializableListener(Listener as EventHandler)
       const eventNames = listenerEventNames(Listener)
       for (const eventName of eventNames) this.listen(eventName, Listener as EventHandler)
     }
@@ -232,7 +234,7 @@ export class EventManager {
           maxExceptions: valueFrom(resolved, 'maxExceptions', event)
         }
         const job = new QueuedClosure(resolved, event, name)
-        return Queue.push(job, options, connection)
+        return Queue.push(job, options, queueName, connection)
       }
       return runListenerMiddleware(resolved, event, name)
     }
@@ -250,6 +252,14 @@ export class EventManager {
   private shouldDispatchAfterCommit(event: string | Record<string, any> | BroadcastableEvent) {
     if (this.transactionDepth <= 0 || typeof event === 'string') return false
     return Boolean((event as any).afterCommit || (event as any).shouldDispatchAfterCommit)
+  }
+
+  private registerSerializableListener(listener: EventHandler) {
+    if (typeof listener === 'function' && typeof (listener as any).prototype?.handle === 'function') {
+      SerializableRegistry.register(listener)
+    } else if (listener && typeof listener === 'object' && typeof (listener as EventListenerObject).handle === 'function') {
+      SerializableRegistry.register(listener.constructor)
+    }
   }
 }
 
@@ -286,6 +296,8 @@ function isBroadcastable(event: any): event is BroadcastableEvent {
 }
 
 export const Event = new EventManager()
+
+SerializableRegistry.register(QueuedClosure)
 
 function shouldQueueListener(listener: EventListenerObject) {
   return listener instanceof ShouldQueue || Boolean(listener.queue || listener.shouldQueue)

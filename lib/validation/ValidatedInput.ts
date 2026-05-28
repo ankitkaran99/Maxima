@@ -10,7 +10,8 @@ export class ValidatedInput<T extends Record<string, unknown> = Record<string, u
   }
 
   except<K extends keyof T>(keys: K[]) {
-    return Object.fromEntries(Object.entries(this.input).filter(([key]) => !keys.includes(key as K))) as Omit<T, K>
+    const excluded = new Set<string>(keys.map(String))
+    return Object.fromEntries(Object.entries(this.input).filter(([key]) => !excluded.has(key))) as Omit<T, K>
   }
 
   collect() {

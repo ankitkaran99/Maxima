@@ -1481,6 +1481,41 @@ describe('HTTP & Routing Extras', () => {
     expect(fsSync.existsSync(cachePath)).toBe(false)
   })
 
+  it('renders a Laravel-like debug page for HTML 500 errors when debug is enabled', async () => {
+    app.config.set('app.debug', true)
+    Route.get('/debug-page', () => {
+      throw new Error('debug boom')
+    })
+
+    const kernel = new HttpKernel(app)
+    await kernel.bootstrap({ loadRoutes: false })
+
+    const response = await kernel.server.inject({ method: 'GET', url: '/debug-page' })
+
+    expect(response.statusCode).toBe(500)
+    expect(response.headers['content-type']).toContain('text/html')
+    expect(response.body).toContain('Application Error')
+    expect(response.body).toContain('debug boom')
+    expect(response.body).toContain('routing.test.ts')
+  })
+
+  it('renders a debug page correctly even when a non-Error string is thrown', async () => {
+    app.config.set('app.debug', true)
+    Route.get('/debug-page-string', () => {
+      throw 'string boom'
+    })
+
+    const kernel = new HttpKernel(app)
+    await kernel.bootstrap({ loadRoutes: false })
+
+    const response = await kernel.server.inject({ method: 'GET', url: '/debug-page-string' })
+
+    expect(response.statusCode).toBe(500)
+    expect(response.headers['content-type']).toContain('text/html')
+    expect(response.body).toContain('Application Error')
+    expect(response.body).toContain('string boom')
+  })
+
   it('supports controller method model injection', async () => {
     const { Schema } = await import('@lib/database/Schema.js')
     const { DB } = await import('@lib/database/DB.js')
@@ -1550,6 +1585,8 @@ describe('HTTP & Routing Extras', () => {
         url: request.url(),
         fullUrl: request.fullUrl(),
         isMatches: request.is('request-*'),
+        literalMatch: request.is('request-helpers'),
+        literalMismatch: request.is('request.helpers'),
         isMatchesOther: request.is('other/*'),
         ip: request.ip()
       })
@@ -1577,6 +1614,8 @@ describe('HTTP & Routing Extras', () => {
     expect(data.url).toBe('http://localhost:3000/request-helpers')
     expect(data.fullUrl).toBe('http://localhost:3000/request-helpers?foo=bar')
     expect(data.isMatches).toBe(true)
+    expect(data.literalMatch).toBe(true)
+    expect(data.literalMismatch).toBe(false)
     expect(data.isMatchesOther).toBe(false)
     expect(data.ip).toBeDefined()
   })
@@ -1710,6 +1749,7 @@ describe('HTTP Client, Processes, Collections, and Support Helpers Parity', () =
 
     const object: any = {}
     Arr.set(object, 'profile.name', 'Ada')
+    Arr.set(object, 'profile.nickname', undefined)
 
     expect(users.unique('name').pluck('name').all()).toEqual(['Ada Lovelace', 'Grace Hopper'])
     expect(users.groupBy('active')).toMatchObject({ true: expect.any(Array), false: expect.any(Array) })
@@ -1719,6 +1759,9 @@ describe('HTTP Client, Processes, Collections, and Support Helpers Parity', () =
     expect((Str.of('ada lovelace') as any).initials()).toBe('AL')
     expect(Str.slug('Hello Maxima Framework')).toBe('hello-maxima-framework')
     expect(Arr.get(object, 'profile.name')).toBe('Ada')
+    expect(Arr.get(object, 'profile.empty', null)).toBe(null)
+    expect(Arr.has(object, 'profile.nickname')).toBe(true)
+    expect(Arr.except({ a: 1, b: 2, c: 3 }, ['b', 'c'])).toEqual({ a: 1 })
     expect(Obj.only({ a: 1, b: 2 }, ['a'])).toEqual({ a: 1 })
     expect(Uri.of('/users').query({ page: 2 }).fragment('top').toString()).toBe('http://localhost/users?page=2#top')
     expect(NumberFormatter.fileSize(1536)).toBe('1.5 KB')

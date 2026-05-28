@@ -219,7 +219,9 @@ export class BroadcastManager {
 
     if (shouldQueue(event)) {
       const { Queue } = await import('@lib/queue/Queue.js')
-      await Queue.push({ handle: async () => { await this.dispatchPayload(payload) } }, {}, payload.queue ?? payload.connection ?? 'default')
+      const queueName = payload.queue ?? payload.connection ?? 'default'
+      const connection = payload.connection ?? queueName
+      await Queue.push({ handle: async () => { await this.dispatchPayload(payload) } }, {}, queueName, connection)
       return payload
     }
 

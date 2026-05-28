@@ -288,16 +288,16 @@ When notifying via `slack`, Maxima accepts plain `{ text }` payloads, strings, o
 
 ### Extending Custom Channels
 
-Add custom notification channels (like SMS, SMS-Vonage, Telegram, etc.) using `Notifications.extend`:
+Add custom notification channels (like Telegram or other provider-specific integrations) using `Notifications.extend`:
 
 ```typescript
 import { Notifications } from '@lib/notifications/Notification.js';
 
 // Extend notification channel
-Notifications.extend('sms', async (notifiable, notification: any) => {
-  const smsPayload = notification.toSms(notifiable);
-  // Execute external SMS provider request...
-  await smsProvider.send(smsPayload.to, smsPayload.body);
+Notifications.extend('telegram', async (notifiable, notification: any) => {
+  const payload = notification.toTelegram(notifiable);
+  // Execute external provider request...
+  await telegramProvider.send(payload.chatId, payload.text);
 });
 ```
 

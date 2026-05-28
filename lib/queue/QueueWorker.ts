@@ -4,6 +4,10 @@ import fs from 'node:fs'
 import { storagePath } from '@lib/foundation/helpers.js'
 
 export class QueueWorker {
+  private static instances = new Set<QueueWorker>()
+  private static signalHandlersInstalled = false
+  private static restartCache = { path: '', mtimeMs: 0, value: 0 }
+
   private shouldQuit = false
   private processed = 0
   private startedAt = Date.now()
@@ -13,75 +17,81 @@ export class QueueWorker {
     public readonly connectionName: string,
     public readonly options: WorkerOptions = {}
   ) {
-    this.setupSignalHandlers()
+    QueueWorker.instances.add(this)
+    QueueWorker.setupSignalHandlers()
   }
 
-  private setupSignalHandlers() {
-    process.on('SIGTERM', () => {
-      this.shouldQuit = true
-    })
-    process.on('SIGINT', () => {
-      this.shouldQuit = true
-    })
+  private static setupSignalHandlers() {
+    if (this.signalHandlersInstalled) return
+    const markWorkersForShutdown = () => {
+      for (const worker of this.instances) worker.shouldQuit = true
+    }
+    process.on('SIGTERM', markWorkersForShutdown)
+    process.on('SIGINT', markWorkersForShutdown)
+    this.signalHandlersInstalled = true
   }
 
   async run() {
-    Log.info(`Worker starting for queue: ${this.connectionName}`)
-    
-    const connConfig = (Queue as any).connectionConfig(this.connectionName)
-    
-    if (connConfig.driver === 'database') {
-      const interval = this.options.sleep !== undefined ? this.options.sleep * 1000 : (connConfig.poll_interval ?? 1000)
-      
-      while (!this.shouldQuit) {
-        if (this.shouldStop()) break
-        this.checkMemory()
-        if (this.shouldQuit) break
-        this.checkRestart()
+    let shouldDeregister = true
+    try {
+      Log.info(`Worker starting for queue: ${this.connectionName}`)
 
-        try {
-          const processed = await (Queue as any).processNextDatabaseJob(this.connectionName, this.options)
-          if (processed) this.processed++
-          
-          if (processed && this.options.rest) {
-            await new Promise(resolve => setTimeout(resolve, this.options.rest! * 1000))
-          }
+      const connConfig = (Queue as any).connectionConfig(this.connectionName)
+      const queueName = this.options.queue ?? this.connectionName
 
-          if (processed && this.options.once) {
-            break
-          }
-          
-          if (!processed) {
-            if (this.options.stopWhenEmpty) break
+      if (connConfig.driver === 'database') {
+        const interval = this.options.sleep !== undefined ? this.options.sleep * 1000 : (connConfig.poll_interval ?? 1000)
+
+        while (!this.shouldQuit) {
+          if (this.shouldStop()) break
+          this.checkMemory()
+          if (this.shouldQuit) break
+          this.checkRestart()
+
+          try {
+            const processed = await (Queue as any).processNextDatabaseJob(this.connectionName, this.options, queueName)
+            if (processed) this.processed++
+
+            if (processed && this.options.rest) {
+              await new Promise(resolve => setTimeout(resolve, this.options.rest! * 1000))
+            }
+
+            if (processed && this.options.once) {
+              break
+            }
+
+            if (!processed) {
+              if (this.options.stopWhenEmpty) break
+              await new Promise(resolve => setTimeout(resolve, interval))
+            }
+          } catch (error) {
+            Log.error(error as Error, { context: 'Database Queue Poller' })
             await new Promise(resolve => setTimeout(resolve, interval))
           }
-        } catch (error) {
-          Log.error(error as Error, { context: 'Database Queue Poller' })
-          await new Promise(resolve => setTimeout(resolve, interval))
         }
+        Log.info(`Worker stopped for queue: ${this.connectionName}`)
+      } else if (connConfig.driver === 'redis') {
+        shouldDeregister = false
+        const beeQueue = (Queue as any).queue(queueName, this.connectionName, connConfig)
+
+        beeQueue.process(async (beeJob: any) => {
+          this.checkMemory()
+          if (this.shouldQuit) {
+            throw new Error('Worker is shutting down')
+          }
+
+          await Queue.handle(beeJob, this.connectionName, this.options, queueName)
+          this.processed++
+
+          if (this.options.once || this.shouldStop()) {
+            await this.stopRedisWorker(beeQueue)
+          }
+        })
+      } else if (connConfig.driver === 'sync') {
+        Log.info('Sync driver doesn\'t support worker polling.')
       }
-      Log.info(`Worker stopped for queue: ${this.connectionName}`)
-    } else if (connConfig.driver === 'redis') {
-      const beeQueue = (Queue as any).queue(this.connectionName)
-      
-      beeQueue.process(async (beeJob: any) => {
-        this.checkMemory()
-        if (this.shouldQuit) {
-          throw new Error('Worker is shutting down')
-        }
-        
-        await Queue.handle(beeJob, this.connectionName, this.options)
-        this.processed++
-        
-        if (this.options.once) {
-          setImmediate(async () => {
-            await beeQueue.close()
-            process.exit(0)
-          })
-        }
-      })
-    } else if (connConfig.driver === 'sync') {
-      Log.info('Sync driver doesn\'t support worker polling.')
+    } finally {
+      if (shouldDeregister) QueueWorker.instances.delete(this)
     }
   }
 
@@ -108,10 +118,32 @@ export class QueueWorker {
     }
   }
 
+  private async stopRedisWorker(beeQueue: any) {
+    this.shouldQuit = true
+    try {
+      await beeQueue.close?.()
+    } finally {
+      QueueWorker.instances.delete(this)
+    }
+  }
+
   private restartTimestamp() {
     try {
       const file = storagePath('framework/queue-restart')
-      return fs.existsSync(file) ? Number(fs.readFileSync(file, 'utf8')) || 0 : 0
+      if (!fs.existsSync(file)) {
+        QueueWorker.restartCache = { path: file, mtimeMs: 0, value: 0 }
+        return 0
+      }
+
+      const stat = fs.statSync(file)
+      const cached = QueueWorker.restartCache
+      if (cached.path === file && cached.mtimeMs === stat.mtimeMs) {
+        return cached.value
+      }
+
+      const value = Number(fs.readFileSync(file, 'utf8')) || 0
+      QueueWorker.restartCache = { path: file, mtimeMs: stat.mtimeMs, value }
+      return value
     } catch {
       return 0
     }

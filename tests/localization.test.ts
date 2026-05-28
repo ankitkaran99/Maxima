@@ -63,6 +63,7 @@ describe('Localization', () => {
         }
       }
     `)
+    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'types.d.ts'), 'export default { broken: true }\n')
     await fs.writeFile(path.join(root, 'resources', 'lang', 'en.json'), JSON.stringify({
       'messages.welcome': 'Root welcome :name'
     }))
@@ -70,6 +71,7 @@ describe('Localization', () => {
     await expect(trans('messages.welcome', { name: 'ada' })).resolves.toBe('Root welcome ada')
     await expect(trans('messages.nested.greeting', { name: 'ada' })).resolves.toBe('Hello Ada')
     await expect(trans('admin.dashboard.title')).resolves.toBe('Admin Dashboard')
+    await expect(trans('types.broken')).resolves.toBe('types.broken')
   })
 
   it('loads vendor namespace translations', async () => {

@@ -596,7 +596,7 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
         const jobProps = data.properties ?? data.payload
         const jobInstance = await deserializeValue(jobProps)
         
-        await Queue.push(jobInstance, {}, failed.queue)
+        await Queue.push(jobInstance, {}, failed.queue, failed.connection ?? failed.queue)
         await DB.table(table).where('id', failed.id).delete()
         console.log(`INFO  Retried failed job [${failed.id}] (${failed.job})`)
       } catch (err) {

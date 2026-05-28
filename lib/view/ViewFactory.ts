@@ -8,6 +8,14 @@ import { app, env, resourcePath, storagePath, trans, transChoice } from '@lib/fo
 import { Gate } from '@lib/auth/Gate.js'
 
 type ViewCallback = (data: Record<string, unknown>, view: { name: string, path: string }) => void | Promise<void>
+type CompiledCache = {
+  source: string
+  template: string
+  mtimeMs: number
+  compiled: string
+  dependencyFiles?: string[]
+  dependencyMtimes?: Record<string, number>
+}
 
 export class ViewFactory {
   private edge = Edge.create()
@@ -236,7 +244,6 @@ export class ViewFactory {
       .replace(/@endisset\b/g, '@endif')
       .replace(/@empty\(([^)]*)\)/g, '@if(__isEmpty($1))')
       .replace(/@endempty\b/g, '@endif')
-      .replace(/@empty\b/g, '@else')
       .replace(/@production\b/g, '@if(__isEnvironment("production"))')
       .replace(/@endproduction\b/g, '@endif')
       .replace(/@env\(([^)]*)\)/g, '@if(__isEnvironment($1))')
@@ -401,17 +408,53 @@ export class ViewFactory {
     const cacheFile = path.join(this.compiledPath, `${crypto.createHash('sha1').update(file).digest('hex')}.edge`)
     if (fsSync.existsSync(cacheFile)) {
       try {
-        const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as { mtimeMs: number, compiled: string }
-        if (typeof cached.compiled === 'string' && cached.mtimeMs >= stat.mtimeMs) return cached.compiled
+        const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as CompiledCache
+        if (typeof cached.compiled === 'string' && cached.mtimeMs >= stat.mtimeMs) {
+          if (cached.dependencyFiles?.length) {
+            let valid = true
+            for (const dependency of cached.dependencyFiles) {
+              const dependencyStat = await fs.stat(dependency).catch(() => null)
+              if (!dependencyStat || (cached.dependencyMtimes?.[dependency] ?? 0) < dependencyStat.mtimeMs) {
+                valid = false
+                break
+              }
+            }
+            if (valid) return cached.compiled
+          } else {
+            const source = await fs.readFile(file, 'utf8')
+            const layoutMatch = source.match(/@extends\(\s*['"]([^'"]+)['"]\s*\)/)
+            if (!layoutMatch) return cached.compiled
+            const layoutFile = path.join(this.rootPath, 'views', `${layoutMatch[1]}.edge`)
+            const layoutStat = await fs.stat(layoutFile).catch(() => null)
+            if (layoutStat) {
+              const dependencyMtime = cached.dependencyMtimes?.[layoutFile] ?? 0
+              if (dependencyMtime >= layoutStat.mtimeMs) return cached.compiled
+            }
+          }
+        }
       } catch {
         // Recompile below when a cache file is stale, partial, or from an older format.
       }
     }
-    const contents = await this.applyLayout(await fs.readFile(file, 'utf8'), file)
+    const rawContents = await fs.readFile(file, 'utf8')
+    const dependencyFiles = this.layoutDependencies(rawContents)
+    const contents = await this.applyLayout(rawContents, file)
     const compiled = this.compileDirectives(contents)
+    const dependencyMtimes: Record<string, number> = {}
+    for (const dependency of dependencyFiles) {
+      const dependencyStat = await fs.stat(dependency).catch(() => null)
+      if (dependencyStat) dependencyMtimes[dependency] = dependencyStat.mtimeMs
+    }
     await fs.mkdir(this.compiledPath, { recursive: true })
-    await fs.writeFile(cacheFile, JSON.stringify({ source: file, template, mtimeMs: stat.mtimeMs, compiled }))
+    await fs.writeFile(cacheFile, JSON.stringify({ source: file, template, mtimeMs: stat.mtimeMs, compiled, dependencyFiles, dependencyMtimes }))
     return compiled
+  }
+
+  private layoutDependencies(contents: string) {
+    const layoutMatch = contents.match(/@extends\(\s*['"]([^'"]+)['"]\s*\)/)
+    if (!layoutMatch) return []
+    const layoutFile = path.join(this.rootPath, 'views', `${layoutMatch[1]}.edge`)
+    return [layoutFile]
   }
 
   private cacheKey(value: string) {

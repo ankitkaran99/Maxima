@@ -178,7 +178,7 @@ export class Translator {
     try {
       if (file.endsWith('.json')) {
         value = JSON.parse(await fs.readFile(file, 'utf8'))
-      } else if (file.endsWith('.js') || file.endsWith('.ts')) {
+      } else if (isTranslationModule(file)) {
         const mod = await import(`${pathToFileURL(file).href}?t=${stat.mtimeMs}`)
         value = mod.default ?? mod.messages ?? mod.translations
       }
@@ -266,6 +266,10 @@ export class Translator {
 
 function capitalize(value: string) {
   return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value
+}
+
+function isTranslationModule(file: string) {
+  return (file.endsWith('.js') || file.endsWith('.ts')) && !file.endsWith('.d.ts')
 }
 
 export const TranslatorInstance = new Translator()

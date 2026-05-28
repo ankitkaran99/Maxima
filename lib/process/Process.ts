@@ -45,12 +45,22 @@ export class ProcessManager {
       let stdout = ''
       let stderr = ''
       let timer: NodeJS.Timeout | undefined
+      const clearTimer = () => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = undefined
+        }
+      }
+
       if (options.timeout) timer = setTimeout(() => child.kill(), options.timeout)
       child.stdout?.on('data', chunk => { stdout += chunk })
       child.stderr?.on('data', chunk => { stderr += chunk })
-      child.on('error', reject)
+      child.on('error', error => {
+        clearTimer()
+        reject(error)
+      })
       child.on('close', code => {
-        if (timer) clearTimeout(timer)
+        clearTimer()
         resolve(new ProcessResult(command, code ?? 0, stdout, stderr))
       })
       if (options.input) child.stdin?.end(options.input)

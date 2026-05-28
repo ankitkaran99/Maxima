@@ -64,7 +64,8 @@ export class Request {
   }
 
   except(keys: string[]) {
-    return Object.fromEntries(Object.entries(this.all()).filter(([key]) => !keys.includes(key)))
+    const excluded = new Set(keys)
+    return Object.fromEntries(Object.entries(this.all()).filter(([key]) => !excluded.has(key)))
   }
 
   boolean(key: string) {
@@ -224,9 +225,7 @@ export class Request {
     const pathVal = this.path().replace(/^\/+|\/+$/g, '')
     for (const pattern of patterns) {
       const normalizedPattern = pattern.replace(/^\/+|\/+$/g, '')
-      const regexPattern = '^' + normalizedPattern
-        .replace(/\*/g, '.*')
-        .replace(/\//g, '\\/') + '$'
+      const regexPattern = '^' + escapeRegExp(normalizedPattern).replace(/\\\*/g, '.*') + '$'
       const regex = new RegExp(regexPattern)
       if (regex.test(pathVal)) {
         return true
@@ -349,4 +348,8 @@ function isPlainFileMap(value: unknown) {
     !('file' in value) &&
     !('toBuffer' in value)
   )
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

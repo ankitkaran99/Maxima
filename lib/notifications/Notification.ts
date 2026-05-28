@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { Mail, Mailable } from '@lib/mail/Mail.js'
 import { DB } from '@lib/database/DB.js'
 import { Event } from '@lib/events/Event.js'
+import { Queue, SendQueuedNotificationJob } from '@lib/queue/Queue.js'
 
 export abstract class Notification {
   public localeName?: string
@@ -14,7 +15,6 @@ export abstract class Notification {
   via(_notifiable: any): string[] { return ['mail'] }
   toMail(_notifiable: any): Mailable | undefined { return undefined }
   toVonage?(_notifiable: any): VonageMessage | string | Record<string, any> | undefined
-  toSms?(_notifiable: any): VonageMessage | string | Record<string, any> | undefined
   toDatabase(_notifiable: any): Record<string, any> { return {} }
   toWebhook(_notifiable: any): { url: string, payload: unknown } | string | undefined { return undefined }
   toSlack?(_notifiable: any): SlackMessage | { text: string } | string | undefined
@@ -121,6 +121,7 @@ export class NotificationManager {
 
   extend(name: string, handler: (notifiable: any, notification: Notification) => Promise<void>) {
     this.custom.set(name, handler)
+    return this
   }
 
   fake() {
@@ -172,19 +173,16 @@ export class NotificationManager {
       let response: any
       if (channel === 'mail') {
         const mail = notification.toMail(notifiable)
-        const email = typeof notifiable.routeNotificationFor === 'function'
-          ? notifiable.routeNotificationFor('mail', notification)
-          : notifiable.email
+        const email = this.resolveRoute(notifiable, 'mail', notification, notifiable.email)
         if (mail && email) response = await Mail.to(email).send(notification.localeName ? mail.locale(notification.localeName) : mail)
       } else if (channel === 'database') {
         response = await this.storeDatabaseNotification(notifiable, notification)
-      } else if (channel === 'vonage' || channel === 'sms') {
-        const message = notification.toVonage?.(notifiable) ?? notification.toSms?.(notifiable)
-        response = await this.sendSms(notifiable, notification, message)
+      } else if (channel === 'vonage') {
+        response = this.buildVonagePayload(notifiable, notification, notification.toVonage?.(notifiable))
       } else if (channel === 'webhook') {
-        const webhook = typeof notifiable.routeNotificationFor === 'function'
+        const webhook = (typeof notifiable.routeNotificationFor === 'function'
           ? notifiable.routeNotificationFor('webhook', notification)
-          : notification.toWebhook(notifiable)
+          : undefined) ?? notification.toWebhook(notifiable)
         if (webhook) {
           const url = typeof webhook === 'string' ? webhook : webhook.url
           const payload = typeof webhook === 'string' ? {} : (webhook.payload ?? webhook.data ?? {})
@@ -198,9 +196,7 @@ export class NotificationManager {
         const slackMessage = typeof notification.toSlack === 'function'
           ? notification.toSlack(notifiable)
           : undefined
-        const slackUrl = typeof notifiable.routeNotificationFor === 'function'
-          ? notifiable.routeNotificationFor('slack', notification)
-          : notifiable.slack_webhook_url
+        const slackUrl = this.resolveRoute(notifiable, 'slack', notification, notifiable.slack_webhook_url)
         if (slackMessage && slackUrl) {
           const payload = slackMessage instanceof SlackMessage ? slackMessage.toPayload() : typeof slackMessage === 'string' ? { text: slackMessage } : slackMessage
           response = await fetch(slackUrl, {
@@ -234,34 +230,28 @@ export class NotificationManager {
     }
   }
 
-  async queue(notifiable: any, notification: Notification, queueName?: string) {
-    const { Queue, SendQueuedNotificationJob } = await import('@lib/queue/Queue.js')
+  queue(notifiable: any, notification: Notification, queueName?: string) {
     return Queue.dispatch(new SendQueuedNotificationJob(notifiable, notification), queueName)
   }
 
   async later(delay: number, notifiable: any, notification: Notification, queueName?: string) {
-    return (await this.queue(notifiable, notification, queueName)).delay(delay)
+    return this.queue(notifiable, notification, queueName).delay(delay)
   }
 
-  private async sendSms(notifiable: any, notification: Notification, message: VonageMessage | string | Record<string, any> | undefined) {
+  private buildVonagePayload(notifiable: any, notification: Notification, message: VonageMessage | string | Record<string, any> | undefined) {
     if (!message) return
-    const route = typeof notifiable.routeNotificationFor === 'function' ? notifiable.routeNotificationFor('vonage', notification) ?? notifiable.routeNotificationFor('sms', notification) : notifiable.phone ?? notifiable.sms
+    const route = this.resolveRoute(notifiable, 'vonage', notification, notifiable.phone)
     const payload = typeof message === 'string'
       ? { to: route, body: message }
       : message instanceof VonageMessage
         ? { to: message.toValue ?? route, from: message.fromValue, body: message.content }
         : { to: message.to ?? route, from: message.from, body: message.body ?? message.content }
-    const { config } = await import('@lib/foundation/helpers.js')
-    const driver = config<string>('sms.default', 'null')
-    const channel = config<any>(`sms.channels.${driver}`, { driver: 'null' })
-    if (channel.driver === 'http' && channel.url) {
-      return fetch(channel.url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...(channel.headers ?? {}) },
-        body: JSON.stringify(payload)
-      })
-    }
     return payload
+  }
+
+  private resolveRoute(notifiable: any, channel: string, notification: Notification, fallback: any) {
+    if (typeof notifiable.routeNotificationFor !== 'function') return fallback
+    return notifiable.routeNotificationFor(channel, notification) ?? fallback
   }
 
   private async storeDatabaseNotification(notifiable: any, notification: Notification) {

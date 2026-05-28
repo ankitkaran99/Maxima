@@ -1,7 +1,7 @@
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
@@ -449,7 +449,26 @@ export class HttpKernel {
     })
 
     this.server.setErrorHandler(async (error, request, reply) => {
-      const exception = error as Error
+      let exception: Error
+      if (error instanceof Error) {
+        exception = error
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        exception = error as Error
+      } else {
+        exception = new Error(typeof error === 'string' ? error : String(error || 'Unknown error'))
+      }
+
+      if (error && typeof error === 'object') {
+        const anyError = error as any
+        const anyException = exception as any
+        if ('statusCode' in anyError && !('statusCode' in anyException)) {
+          anyException.statusCode = anyError.statusCode
+        }
+        if ('status' in anyError && !('status' in anyException)) {
+          anyException.status = anyError.status
+        }
+      }
+
       if (this.app.config.get('__testing.withoutExceptionHandling', false)) throw exception
       const maximaRequest = (request as any).maximaRequest as Request | undefined
       const resolvedRequest = maximaRequest ?? new Request(request, reply)
@@ -484,6 +503,9 @@ export class HttpKernel {
     }
     const status = Number((error as any).statusCode ?? 500)
     if (acceptsJson) return reply.code(status).send({ message: (error as Error).message })
+    if (status >= 500 && this.isDebugMode()) {
+      return this.renderDebugErrorPage(reply, error, maximaRequest ?? new Request(request, reply), status)
+    }
     return this.renderErrorPage(reply, status, status >= 500 ? 'errors.500' : `errors.${status}`, {
       message: (error as Error).message,
       statusCode: status
@@ -499,6 +521,142 @@ export class HttpKernel {
     } catch {
       return reply.code(statusCode).type('text/plain').send(statusCode === 404 ? 'Not Found' : statusCode === 403 ? 'Forbidden' : 'Server Error')
     }
+  }
+
+  private async renderDebugErrorPage(reply: FastifyReply, error: Error, request: Request, statusCode: number) {
+    try {
+      const { ViewFactory } = await import('@lib/view/ViewFactory.js')
+      let viewFactory = await this.app.make<any>(ViewFactory)
+      if (!viewFactory.exists('errors.debug')) {
+        const bundledViews = path.join(process.cwd(), 'src', 'resources')
+        const bundledTemplate = path.join(bundledViews, 'views', 'errors', 'debug.edge')
+        if (fs.existsSync(bundledTemplate)) {
+          viewFactory = new ViewFactory(bundledViews, storagePath('framework/views'))
+        }
+      }
+      const debug = this.buildDebugErrorData(error, request, statusCode)
+      const html = await viewFactory.render('errors.debug', debug)
+      return reply.code(statusCode).type('text/html').send(html)
+    } catch (renderError) {
+      return this.renderErrorPage(reply, statusCode, 'errors.500', {
+        message: error.message,
+        statusCode
+      })
+    }
+  }
+
+  private buildDebugErrorData(error: Error, request: Request, statusCode: number) {
+    const frames = this.parseStack(error.stack ?? '')
+    const source = frames[0] ? this.readSourceFrame(frames[0]) : null
+    return {
+      statusCode,
+      errorName: error.name,
+      message: error.message,
+      req: {
+        method: request.method(),
+        url: request.url(),
+        fullUrl: request.fullUrl(),
+        ip: request.ip(),
+        route: (request.raw as any).currentRoute?.name ?? (request.raw as any).currentRoute?.path ?? request.path()
+      },
+      app: {
+        name: this.app.config.get('app.name', 'Maxima'),
+        env: this.app.config.get('app.env', 'local'),
+        debug: this.app.config.get('app.debug', false)
+      },
+      sourceFile: source ? source.file : 'No source frame available',
+      sourceHtml: source ? this.buildSourceMarkup(source) : '',
+      traceCount: frames.length,
+      traceHtml: this.buildTraceMarkup(frames),
+      stack: error.stack ?? ''
+    }
+  }
+
+  private parseStack(stack: string) {
+    return stack
+      .split('\n')
+      .map(line => line.trim())
+      .map(line => {
+        const match = line.match(/^at\s+(?:(.*?)\s+\()?(.+?):(\d+):(\d+)\)?$/)
+        if (!match) return null
+        const file = this.normalizeStackFile(match[2])
+        if (!file || this.isInternalStackFile(file)) return null
+        return {
+          method: match[1] && match[1] !== 'Object.<anonymous>' ? match[1] : null,
+          file,
+          line: Number(match[3]),
+          column: Number(match[4]),
+          relative: this.relativeStackFile(file)
+        }
+      })
+      .filter((frame): frame is { method: string | null, file: string, line: number, column: number, relative: string } => Boolean(frame))
+  }
+
+  private normalizeStackFile(file: string) {
+    if (file.startsWith('file://')) return fileURLToPath(file)
+    if (file.startsWith('node:')) return file
+    return path.resolve(file)
+  }
+
+  private isInternalStackFile(file: string) {
+    return file.startsWith('node:') || 
+           file.includes(`${path.sep}node_modules${path.sep}`) || 
+           file.includes(`${path.sep}internal${path.sep}`) ||
+           file.includes(`${path.sep}lib${path.sep}`)
+  }
+
+  private relativeStackFile(file: string) {
+    const root = this.app.rootPath
+    if (file.startsWith(root)) return path.relative(root, file).replace(/\\/g, '/')
+    return file.replace(/\\/g, '/')
+  }
+
+  private readSourceFrame(frame: { file: string, line: number }) {
+    try {
+      const contents = fs.readFileSync(frame.file, 'utf8').split(/\r?\n/)
+      const start = Math.max(0, frame.line - 4)
+      const end = Math.min(contents.length, frame.line + 2)
+      return {
+        file: this.relativeStackFile(frame.file),
+        line: frame.line,
+        snippet: contents.slice(start, end).map((content, index) => {
+          const lineNumber = start + index + 1
+          return {
+            number: lineNumber,
+            content,
+            highlight: lineNumber === frame.line
+          }
+        })
+      }
+    } catch {
+      return null
+    }
+  }
+
+  private buildSourceMarkup(source: { file: string, snippet: Array<{ number: number, content: string, highlight: boolean }> }) {
+    return source.snippet.map(line => `
+      <div class="code-line${line.highlight ? ' highlight' : ''}">
+        <span class="line-number">${line.number}</span>
+        <span class="line-content">${this.escapeHtml(line.content)}</span>
+      </div>
+    `).join('')
+  }
+
+  private buildTraceMarkup(frames: Array<{ method: string | null, relative: string, line: number, column: number }>) {
+    return frames.map(frame => `
+      <div class="trace-item">
+        <p class="trace-method">${this.escapeHtml(frame.method || 'anonymous')}</p>
+        <p class="trace-path">${this.escapeHtml(frame.relative)}:${frame.line}:${frame.column}</p>
+      </div>
+    `).join('')
+  }
+
+  private escapeHtml(value: string) {
+    return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char] ?? char))
+  }
+
+  private isDebugMode() {
+    return Boolean(this.app.config.get('app.debug', false))
   }
 
   private async resolveModelBinding(param: string, value: any, route: RouteDefinition, boundModels: Record<string, any>) {

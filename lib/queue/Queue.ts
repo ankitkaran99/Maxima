@@ -50,19 +50,68 @@ export class SerializableRegistry {
 export class PendingDispatch {
   private options: Record<string, any> = {}
   private dispatched = false
+  private scheduled = false
+  private afterResponse = false
+  private afterResponsePromise: Promise<any> | null = null
 
-  constructor(public queue: QueueManager, public job: Job, public queueName: string) {}
+  constructor(public queue: QueueManager, public job: Job, public queueName: string, public connectionName = config<string>('queue.default', 'default')) {}
   onQueue(queue: string) { this.queueName = queue; return this }
-  delay(ms: number) { this.options.delay = ms; return this.dispatch() }
+  onConnection(connection: string) { this.connectionName = connection; return this }
+  delay(ms: number) {
+    this.options.delay = ms
+    return this.afterResponse ? this.schedule() : this.dispatch()
+  }
   retries(count: number) { this.options.retries = count; return this }
   afterCommit() { this.options.afterCommit = true; return this }
   beforeCommit() { this.options.afterCommit = false; return this }
+  runAfterResponse() {
+    this.afterResponse = true
+    return this
+  }
+  schedule() {
+    if (this.scheduled) return this
+    this.scheduled = true
+    if (this.afterResponse) {
+      this.afterResponsePromise = new Promise((resolve, reject) => {
+        setImmediate(() => {
+          const delay = Number(this.options.delay ?? 0)
+          const run = () => { void this.execute().then(resolve, reject) }
+          if (delay > 0) {
+            setTimeout(run, delay)
+          } else {
+            run()
+          }
+        })
+      })
+      return this
+    }
+    setImmediate(() => {
+      void this.dispatch().catch(error => Log.error(error as Error))
+    })
+    return this
+  }
   dispatch() {
+    if (this.afterResponsePromise) {
+      return this.afterResponsePromise
+    }
     if (!this.dispatched) {
       this.dispatched = true
-      return this.queue.push(this.job, this.options, this.queueName)
+      if (this.afterResponse) {
+        return this.execute()
+      }
+      return this.queue.push(this.job, this.options, this.queueName, this.connectionName)
     }
     return Promise.resolve({ queued: true, queue: this.queueName, job: this.job.constructor.name, options: this.options })
+  }
+  private execute() {
+    this.dispatched = true
+    return this.queue.executeJob(this.connectionName, this.job, {}, this.queueName)
+  }
+  then<TResult1 = any, TResult2 = never>(
+    onfulfilled?: ((value: any) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
+  ) {
+    return this.dispatch().then(onfulfilled, onrejected)
   }
 }
 
@@ -144,7 +193,8 @@ export class PendingBatch {
       then: [],
       catch: [],
       finally: [],
-      allowFailures: this.allowsFailuresFlag
+      allowFailures: this.allowsFailuresFlag,
+      queueName: this.queueName
     }
 
     const inMemory: any = {}
@@ -350,7 +400,23 @@ export class QueueManager {
   private failingCallbacks: Array<(event: { connection: string, job: Job, payload: any, exception: Error }) => Promise<void> | void> = []
 
   fake() { this.pushed = []; this.failed = [] }
-  restore() { this.pushed = null; this.failed = null; this.activePollers.clear() }
+  restore() {
+    this.pushed = null
+    this.failed = null
+    this.activePollers.clear()
+    for (const queue of this.queues.values()) {
+      try {
+        void (queue as any).close?.()
+      } catch {}
+    }
+    this.queues.clear()
+    this.connectionFactories.clear()
+    this.payloadHooks = []
+    this.beforeCallbacks = []
+    this.afterCallbacks = []
+    this.failingCallbacks = []
+    QueueManager.inMemoryCallbacks.clear()
+  }
   assertPushed(job: string) {
     if (!this.pushed?.some(entry => entry.job === job)) throw new Error(`Expected job [${job}] was not pushed.`)
   }
@@ -374,8 +440,7 @@ export class QueueManager {
   }
 
   dispatch(job: Job, queue = config<string>('queue.default', 'default')) {
-    void this.push(job, {}, queue)
-    return new PendingDispatch(this, job, queue)
+    return new PendingDispatch(this, job, queue).schedule()
   }
 
   async dispatchSync(job: Job, queue = config<string>('queue.default', 'default')) {
@@ -385,10 +450,7 @@ export class QueueManager {
 
   dispatchAfterResponse(job: Job | (() => Promise<void> | void), queue = config<string>('queue.default', 'default')) {
     const queuedJob = typeof job === 'function' ? new CallQueuedClosure(job) : job
-    setImmediate(() => {
-      void this.executeJob('after-response', queuedJob, {}, queue).catch(error => Log.error(error as Error))
-    })
-    return new PendingDispatch(this, queuedJob, queue)
+    return new PendingDispatch(this, queuedJob, queue).runAfterResponse().schedule()
   }
 
   createPayloadUsing(callback: PayloadHook) {
@@ -417,9 +479,9 @@ export class QueueManager {
     return config<any>(`queue.connections.${name}`) ?? config<any>(`queue.connections.${defaultConn}`) ?? { driver: 'sync' }
   }
 
-  async push(job: Job, options: Record<string, any> = {}, queue = config<string>('queue.default', 'default')) {
+  async push(job: Job, options: Record<string, any> = {}, queue = config<string>('queue.default', 'default'), connection = queue) {
     if (options.afterCommit) {
-      DB.afterCommit(() => { void this.push(job, { ...options, afterCommit: false }, queue) })
+      DB.afterCommit(() => { void this.push(job, { ...options, afterCommit: false }, queue, connection) })
       return { queued: true, queue, job: job.constructor.name, options: { ...options, afterCommit: true } }
     }
 
@@ -434,7 +496,7 @@ export class QueueManager {
       return { queued: true, queue, job: jobName, options }
     }
 
-    const connConfig = this.connectionConfig(queue)
+    const connConfig = this.connectionConfig(connection)
     const uniqueLock = await this.acquireUniqueLock(job)
     if (uniqueLock === false) return { queued: false, queue, job: job.constructor.name, options, reason: 'unique-lock' }
 
@@ -473,10 +535,10 @@ export class QueueManager {
     }
 
     if (this.connectionFactories.has(connConfig.driver)) {
-      return this.connectionFactories.get(connConfig.driver)!(queue, connConfig, this).push(job, options, payloadObject)
+      return this.connectionFactories.get(connConfig.driver)!(connection, connConfig, this).push(job, options, payloadObject)
     }
 
-    const bee = this.queue(queue)
+    const bee = this.queue(queue, connection, connConfig)
     return bee.createJob(payloadObject)
       .retries(options.retries ?? 3)
       .delayUntil(Date.now() + (options.delay ?? 0))
@@ -565,7 +627,7 @@ export class QueueManager {
     }
   }
 
-  async handle(beeJob: any, queue = config<string>('queue.default', 'default'), options: WorkerOptions = {}) {
+  async handle(beeJob: any, connection = config<string>('queue.default', 'default'), options: WorkerOptions = {}, queueName = connection) {
     const data = await this.decodePayload(beeJob.data)
     const payload = data.payload ?? data.properties
     let job: Job
@@ -576,39 +638,31 @@ export class QueueManager {
         job = beeJob.data.payload as Job
       }
     } catch (error) {
-      await this.recordFailedJob(queue, beeJob, error as Error)
+      await this.recordFailedJob(connection, queueName, beeJob, error as Error)
       throw error
     }
 
     try {
       const executePromise = this.executeJob(
-        'redis',
+        connection,
         job,
         {
           chain: data.chain,
           batchId: data.batchId,
           jobId: beeJob.id
         },
-        queue
+        queueName
       )
 
-      if (options.timeout) {
-        const timeoutMs = options.timeout * 1000
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(`Job timed out after ${options.timeout} seconds`)), timeoutMs)
-        })
-        await Promise.race([executePromise, timeoutPromise])
-      } else {
-        await executePromise
-      }
+      await this.runWithTimeout(executePromise, options.timeout)
     } catch (error) {
-      await this.recordFailedJob(queue, { ...beeJob, data }, error as Error)
+      await this.recordFailedJob(connection, queueName, { ...beeJob, data }, error as Error)
       throw error
     }
   }
 
-  private async processNextDatabaseJob(queueName: string, options: WorkerOptions = {}): Promise<boolean> {
-    const connConfig = this.connectionConfig(queueName)
+  private async processNextDatabaseJob(connectionName: string, options: WorkerOptions = {}, queueName = connectionName): Promise<boolean> {
+    const connConfig = this.connectionConfig(connectionName)
     const table = connConfig.table ?? 'jobs'
     const retryAfter = connConfig.retry_after ?? 90
     const now = Math.floor(Date.now() / 1000)
@@ -642,7 +696,7 @@ export class QueueManager {
       payloadObj = await this.decodePayload(JSON.parse(job.payload))
     } catch (err) {
       await DB.table(table).where('id', job.id).delete()
-      await this.recordFailedJob(queueName, { id: job.id, data: { class: 'Unknown', payload: {} } }, err as Error)
+      await this.recordFailedJob(connectionName, queueName, { id: job.id, data: { class: 'Unknown', payload: {} } }, err as Error)
       return true
     }
 
@@ -662,15 +716,7 @@ export class QueueManager {
         queueName
       )
 
-      if (options.timeout) {
-        const timeoutMs = options.timeout * 1000
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(`Job timed out after ${options.timeout} seconds`)), timeoutMs)
-        })
-        await Promise.race([executePromise, timeoutPromise])
-      } else {
-        await executePromise
-      }
+      await this.runWithTimeout(executePromise, options.timeout)
 
       await DB.table(table).where('id', job.id).delete()
     } catch (error: any) {
@@ -681,7 +727,7 @@ export class QueueManager {
       const expired = payloadObj.retryUntil ? now >= Number(payloadObj.retryUntil) : false
       if (attempts >= maxTries || attempts >= maxExceptions || expired) {
         await DB.table(table).where('id', job.id).delete()
-        await this.recordFailedJob(queueName, { id: job.id, data: { class: payloadObj.class, payload: payloadObj.properties ?? payloadObj.payload } }, error)
+        await this.recordFailedJob(connectionName, queueName, { id: job.id, data: { class: payloadObj.class, payload: payloadObj.properties ?? payloadObj.payload } }, error)
       } else {
         await DB.table(table)
           .where('id', job.id)
@@ -695,16 +741,18 @@ export class QueueManager {
     return true
   }
 
-  private queue(name: string) {
-    if (!this.queues.has(name)) this.queues.set(name, new BeeQueue(name, config('queue.connections.redis', {})))
-    return this.queues.get(name)!
+  private queue(name: string, connection: string, connectionConfig = config('queue.connections.redis', {})) {
+    const cacheKey = `${connection}:${name}`
+    if (!this.queues.has(cacheKey)) this.queues.set(cacheKey, new BeeQueue(name, connectionConfig))
+    return this.queues.get(cacheKey)!
   }
 
   private async createPayload(connection: string, queue: string, job: Job, options: Record<string, any>) {
+    const serializedJob = serializeValue(job)
     let payload: Record<string, any> = {
       class: job.constructor.name,
-      properties: serializeValue(job),
-      payload: serializeValue(job),
+      properties: serializedJob,
+      payload: serializedJob,
       chain: options.chain ?? [],
       batchId: options.batchId,
       options,
@@ -765,6 +813,22 @@ export class QueueManager {
     return Number(values[index] ?? values[0] ?? 5)
   }
 
+  private async runWithTimeout<T>(promise: Promise<T>, timeout?: number) {
+    if (!timeout) return promise
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Job timed out after ${timeout} seconds`)), timeout * 1000)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
   private uniqueKey(job: Job) {
     const marker = job instanceof ShouldBeUnique || job instanceof ShouldBeUniqueUntilProcessing || (job as any).shouldBeUnique
     if (!marker) return null
@@ -792,16 +856,22 @@ export class QueueManager {
     }
   }
 
-  private async recordFailedJob(queue: string, beeJob: any, error: Error) {
-    if (this.failed) this.failed.push({ queue, job: beeJob.data.class ?? beeJob.data.payload?.class, error: error.message })
+  private async recordFailedJob(connection: string, queue: string, beeJob: any, error: Error) {
+    const exception = error instanceof Error
+      ? error
+      : (error && typeof error === 'object' && 'message' in error
+          ? error as Error
+          : new Error(typeof error === 'string' ? error : String(error || 'Unknown error')))
+
+    if (this.failed) this.failed.push({ queue, job: beeJob.data.class ?? beeJob.data.payload?.class, error: exception.message })
     const table = config<string>('queue.failed.table', 'failed_jobs')
     const row = {
-      connection: queue,
+      connection,
       queue,
       job: beeJob.data.class ?? beeJob.data.payload?.class ?? 'Unknown',
       payload: JSON.stringify(beeJob.data),
-      exception: error.stack ?? error.message,
-      error: error.message,
+      exception: exception.stack ?? exception.message,
+      error: exception.message,
       failed_at: new Date()
     }
     await DB.table(table).insert(row).catch(async () => {
@@ -850,12 +920,13 @@ export class QueueManager {
     if (pending <= 0) {
       const options = JSON.parse(batch.options || '{}')
       const hasFailures = batch.failed_jobs > 0
+      const callbackQueue = options.queueName ?? batch.queueName
 
       if (!hasFailures && batch.cancelled_at === null) {
         if (options.then && Array.isArray(options.then)) {
           for (const serializedCb of options.then) {
             const cbJob = await deserializeValue(serializedCb)
-            await this.push(cbJob, {}, batch.queueName)
+            await this.push(cbJob, {}, callbackQueue)
           }
         }
         const inMem = QueueManager.inMemoryCallbacks.get(batchId)
@@ -869,7 +940,7 @@ export class QueueManager {
       if (options.finally && Array.isArray(options.finally)) {
         for (const serializedCb of options.finally) {
           const cbJob = await deserializeValue(serializedCb)
-          await this.push(cbJob, {}, batch.queueName)
+          await this.push(cbJob, {}, callbackQueue)
         }
       }
       const inMem = QueueManager.inMemoryCallbacks.get(batchId)
@@ -903,6 +974,7 @@ export class QueueManager {
 
     const options = JSON.parse(batch.options || '{}')
     const allowFailures = options.allowFailures ?? false
+    const callbackQueue = options.queueName ?? batch.queueName
     if (!allowFailures && batch.cancelled_at === null) {
       updateData.cancelled_at = Math.floor(Date.now() / 1000)
     }
@@ -915,7 +987,7 @@ export class QueueManager {
       if (options.catch && Array.isArray(options.catch)) {
         for (const serializedCb of options.catch) {
           const cbJob = await deserializeValue(serializedCb)
-          await this.push(cbJob, {}, batch.queueName)
+          await this.push(cbJob, {}, callbackQueue)
         }
       }
       const inMem = QueueManager.inMemoryCallbacks.get(batchId)
@@ -930,7 +1002,7 @@ export class QueueManager {
       if (options.finally && Array.isArray(options.finally)) {
         for (const serializedCb of options.finally) {
           const cbJob = await deserializeValue(serializedCb)
-          await this.push(cbJob, {}, batch.queueName)
+          await this.push(cbJob, {}, callbackQueue)
         }
       }
       const inMem = QueueManager.inMemoryCallbacks.get(batchId)

@@ -227,6 +227,15 @@ describe('CLI Extras', () => {
     expect(failedAfter).toBeUndefined()
   })
 
+  it('queue:restart writes the restart signal file', async () => {
+    const restartFile = path.join(root, 'src', 'storage', 'framework', 'queue-restart')
+
+    await runCliCommand(['queue:restart'])
+
+    expect(fsSync.existsSync(restartFile)).toBe(true)
+    await expect(fs.readFile(restartFile, 'utf8')).resolves.not.toBe('')
+  })
+
   it('queue:flush clears all failed jobs', async () => {
     await Schema.create('failed_jobs', table => {
       table.increments('id')

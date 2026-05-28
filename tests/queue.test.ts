@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '@lib/foundation/Application.js'
-import { setApplication } from '@lib/foundation/helpers.js'
+import { app, setApplication } from '@lib/foundation/helpers.js'
 import { DB } from '@lib/database/DB.js'
 import { Mail, Mailable } from '@lib/mail/Mail.js'
 import { Notifications, Notification } from '@lib/notifications/Notification.js'
 import { Queue, type Job, SerializableRegistry, Batch, ShouldBeUnique, ShouldBeUniqueUntilProcessing } from '@lib/queue/Queue.js'
+import { QueueWorker } from '@lib/queue/QueueWorker.js'
 import { ViewFactory } from '@lib/view/ViewFactory.js'
 import { Schema } from '@lib/database/Schema.js'
 import { Bus } from '@lib/queue/Bus.js'
 import { Cache } from '@lib/cache/Cache.js'
 import { WithoutOverlapping, ThrottlesExceptions } from '@lib/queue/Middleware.js'
+import { Event } from '@lib/events/Event.js'
 
 // --- Globals ---
 let originalFetch: typeof fetch | undefined
@@ -184,6 +186,26 @@ class CacheExtrasFailingJob implements Job {
   }
 }
 
+class DatabaseQueuedEvent {
+  constructor(public label: string) {}
+}
+
+class DatabaseQueuedListener {
+  queue = true
+  queueName = 'listeners'
+  connection = 'database'
+
+  async handle(event: DatabaseQueuedEvent) {
+    handled.push(`listener:${event.label}`)
+  }
+}
+
+class BatchCallbackJob implements Job {
+  async handle() {
+    handled.push('batch-callback')
+  }
+}
+
 // --- Registration ---
 SerializableRegistry.register(TestDbJob)
 SerializableRegistry.register(TestFailingJob)
@@ -205,6 +227,7 @@ SerializableRegistry.register(MiddlewareParityJob)
 SerializableRegistry.register(CacheExtrasSyncJob)
 SerializableRegistry.register(CacheExtrasDbJob)
 SerializableRegistry.register(CacheExtrasFailingJob)
+SerializableRegistry.register(BatchCallbackJob)
 
 describe('Queue System (Fake)', () => {
   beforeEach(async () => {
@@ -248,9 +271,11 @@ describe('Queue System (Fake)', () => {
     await DB.close()
     await DB.connection().schema.createTable('failed_jobs', table => {
       table.increments('id')
+      table.string('connection')
       table.string('queue')
       table.string('job')
       table.text('payload')
+      table.text('exception')
       table.text('error')
       table.timestamp('failed_at')
     })
@@ -268,11 +293,27 @@ describe('Queue System (Fake)', () => {
   })
 
   it('tracks pushed jobs and supports delay/retry metadata', async () => {
+    const pushSpy = vi.spyOn(Queue, 'push')
+
     await Queue.dispatch(new ExampleJob('alpha'))
     await Queue.dispatch(new ExampleJob('beta')).delay(5000)
     await Queue.dispatch(new ExampleJob('gamma')).retries(5)
 
+    expect(pushSpy).toHaveBeenCalledTimes(3)
     expect(() => Queue.assertPushed('ExampleJob')).not.toThrow()
+
+    pushSpy.mockRestore()
+  })
+
+  it('dispatches fire-and-forget jobs without awaiting them', async () => {
+    const pushSpy = vi.spyOn(Queue, 'push')
+
+    Queue.dispatch(new ExampleJob('delta'))
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(pushSpy).toHaveBeenCalledTimes(1)
+
+    pushSpy.mockRestore()
   })
 
   it('records failed jobs when a worker handler throws', async () => {
@@ -369,9 +410,11 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
 
     await Schema.create('failed_jobs', table => {
       table.increments('id')
+      table.string('connection')
       table.string('queue')
       table.string('job')
       table.text('payload')
+      table.text('exception')
       table.text('error')
       table.timestamp('failed_at')
     })
@@ -488,6 +531,49 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
     expect(batchInstance?.cancelled()).toBe(true)
   })
 
+  it('dispatches serialized batch callbacks on the batch queue', async () => {
+    await Queue.batch([
+      new TestDbJob('batch-queued')
+    ], 'alerts')
+      .then(new BatchCallbackJob())
+      .dispatch()
+
+    await (Queue as any).processNextDatabaseJob('database', {}, 'alerts')
+
+    const callbackRow = await DB.table('jobs').first()
+    expect(callbackRow).toMatchObject({ queue: 'alerts' })
+
+    await (Queue as any).processNextDatabaseJob('database', {}, 'alerts')
+
+    expect(handled).toContain('batch-callback')
+  })
+
+  it('installs queue worker signal handlers only once', () => {
+    const sigintCount = process.listenerCount('SIGINT')
+    const sigtermCount = process.listenerCount('SIGTERM')
+    const instances = (QueueWorker as any).instances as Set<QueueWorker>
+    const before = instances.size
+
+    new QueueWorker('database')
+    new QueueWorker('database')
+
+    expect(process.listenerCount('SIGINT')).toBe(sigintCount + 1)
+    expect(process.listenerCount('SIGTERM')).toBe(sigtermCount + 1)
+    expect(instances.size).toBe(before + 2)
+  })
+
+  it('removes completed workers from the registry after run', async () => {
+    const instances = (QueueWorker as any).instances as Set<QueueWorker>
+    const before = instances.size
+    const worker = new QueueWorker('sync')
+
+    expect(instances.size).toBe(before + 1)
+
+    await worker.run()
+
+    expect(instances.size).toBe(before)
+  })
+
   it('runs job middleware successfully', async () => {
     await Queue.push(new MiddlewareJob(), {}, 'database')
 
@@ -504,6 +590,18 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
 
     expect(MiddlewareAbortingJob.middlewareRan).toBe(true)
     expect(jobRan).toBe(false)
+  })
+
+  it('passes the connection name to custom queue factories', async () => {
+    const push = vi.fn().mockResolvedValue({ queued: true })
+    const factory = vi.fn(() => ({ push }))
+    Queue.extend('custom', factory as any)
+    ;(app() as Application).config.set('queue.connections.custom-conn', { driver: 'custom' })
+
+    await Queue.push(new CacheExtrasDbJob('custom-driver'), {}, 'alerts', 'custom-conn')
+
+    expect(factory).toHaveBeenCalledWith('custom-conn', expect.objectContaining({ driver: 'custom' }), Queue)
+    expect(push).toHaveBeenCalled()
   })
 
   it('triggers before, after, and failing lifecycle events', async () => {
@@ -533,6 +631,19 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
     expect(events).toContain('failing:TestFailingJob')
   })
 
+  it('serializes queued event listeners for database workers', async () => {
+    Event.listen(DatabaseQueuedEvent, DatabaseQueuedListener)
+
+    Event.dispatch(new DatabaseQueuedEvent('stored'))
+
+    const storedJob = await DB.table('jobs').where('queue', 'listeners').first()
+    expect(storedJob).not.toBeNull()
+
+    await (Queue as any).processNextDatabaseJob('database', {}, 'listeners')
+
+    expect(handled).toContain('listener:stored')
+  })
+
   it('enforces execution timeouts', async () => {
     await Queue.push(new TimeoutJob(), {}, 'database')
 
@@ -555,9 +666,29 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
     expect(failed.error).toContain('timed out')
   })
 
+  it('clears timeout timers after a fast job completes', async () => {
+    vi.useFakeTimers()
+    const executeSpy = vi.spyOn(Queue as any, 'executeJob').mockResolvedValue(undefined)
+
+    try {
+      await Queue.handle(
+        { id: 1, data: { payload: new ExampleJob('fast') } } as any,
+        'database',
+        { timeout: 1 },
+        'default'
+      )
+
+      expect(vi.getTimerCount()).toBe(0)
+      expect(executeSpy).toHaveBeenCalled()
+    } finally {
+      executeSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   // --- Sync Driver (from queue-cache-extras.test.ts) ---
   it('runs sync queue driver immediately', async () => {
-    await Queue.dispatch(new CacheExtrasSyncJob('hello-sync'), 'sync')
+    await Queue.dispatch(new CacheExtrasSyncJob('hello-sync')).onConnection('sync')
     
     // Give event loop a turn to run setImmediate
     await new Promise(resolve => setImmediate(resolve))
@@ -591,6 +722,29 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
     // Job should be deleted after completion
     const jobAfterCompletion = await DB.table('jobs').first()
     expect(jobAfterCompletion).toBeUndefined()
+  })
+
+  it('processes database jobs from a named queue on the same connection', async () => {
+    await Queue.push(new CacheExtrasDbJob('hello-alerts'), {}, 'alerts', 'database')
+
+    const processed = await (Queue as any).processNextDatabaseJob('database', {}, 'alerts')
+    expect(processed).toBe(true)
+
+    expect(jobRan).toBe(true)
+    expect(jobValue).toBe('hello-alerts')
+  })
+
+  it('records failed jobs with separate connection and queue values', async () => {
+    await Queue.push(new CacheExtrasFailingJob(), {}, 'alerts', 'database')
+
+    await (Queue as any).processNextDatabaseJob('database', { tries: 1 }, 'alerts')
+
+    const failedJob = await DB.table('failed_jobs').first()
+    expect(failedJob).toMatchObject({
+      connection: 'database',
+      queue: 'alerts',
+      job: 'CacheExtrasFailingJob'
+    })
   })
 
   it('moves database jobs to failed_jobs after tries are exceeded', async () => {
@@ -628,6 +782,30 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
     await new Promise(resolve => setImmediate(resolve))
 
     expect(handled).toEqual(['sync', 'after-response'])
+  })
+
+  it('preserves after-response execution when awaited', async () => {
+    const pushSpy = vi.spyOn(Queue, 'push')
+
+    const pending = Queue.dispatchAfterResponse(() => { handled.push('awaited-after-response') })
+    expect(handled).not.toContain('awaited-after-response')
+
+    await pending
+
+    expect(pushSpy).not.toHaveBeenCalled()
+    expect(handled).toContain('awaited-after-response')
+
+    pushSpy.mockRestore()
+  })
+
+  it('supports delayed after-response dispatch without executing early', async () => {
+    const pending = Queue.dispatchAfterResponse(() => { handled.push('delayed-after-response') }).delay(10)
+
+    await new Promise(resolve => setImmediate(resolve))
+    expect(handled).not.toContain('delayed-after-response')
+
+    await pending
+    expect(handled).toContain('delayed-after-response')
   })
 
   // --- Unique/Encrypted jobs (from queue-bus-scheduler-parity.test.ts) ---

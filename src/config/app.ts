@@ -5,6 +5,7 @@ import { AppServiceProvider } from '@app/Providers/AppServiceProvider.js'
 export default {
   name: env('APP_NAME', 'Maxima'),
   env: env('APP_ENV', 'local'),
+  debug: env('APP_DEBUG', false),
   key: env('APP_KEY', 'maxima-secret'),
   url: env('APP_URL', 'http://127.0.0.1:3000'),
   locale: env('APP_LOCALE', 'en'),

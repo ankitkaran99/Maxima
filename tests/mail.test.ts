@@ -96,10 +96,9 @@ class InvoiceMail extends Mailable {
 }
 
 class InvoicePaid extends Notification {
-  constructor(private invoice: { id: number, amount: number, webhookUrl: string, sms: string }) { super() }
-  via() { return ['mail', 'database', 'webhook', 'sms', 'custom'] }
+  constructor(private invoice: { id: number, amount: number, webhookUrl: string }) { super() }
+  via() { return ['mail', 'database', 'webhook', 'custom'] }
   toMail() { return new InvoiceMail() }
-  toSms() { return { to: this.invoice.sms, body: `Invoice ${this.invoice.id} paid.` } }
   toDatabase() { return { invoiceId: this.invoice.id, amount: this.invoice.amount } }
   toWebhook() { return { url: this.invoice.webhookUrl, payload: this.toDatabase() } }
 }
@@ -119,9 +118,6 @@ describe('Notification System', () => {
     app.config.set('mail.default', 'array')
     app.config.set('mail.mailers.array', { transport: 'array' })
     app.config.set('mail.from', { address: 'hello@example.com', name: 'Maxima' })
-    app.config.set('sms.default', 'null')
-    app.config.set('sms.from', 'Maxima')
-    app.config.set('sms.channels.null', { driver: 'null' })
     app.instance(ViewFactory, new ViewFactory())
 
     Mail.restore()
@@ -152,7 +148,7 @@ describe('Notification System', () => {
   })
 
   it('sends notifications through all configured channels', async () => {
-    const invoice = { id: 7, amount: 1250, webhookUrl: 'https://example.com/webhook', sms: '+15550001' }
+    const invoice = { id: 7, amount: 1250, webhookUrl: 'https://example.com/webhook' }
     const user = { id: 1, email: 'ada@example.com' }
     const custom = vi.fn()
     Notifications.extend('custom', async (notifiable, notification) => { custom(notifiable, notification) })
@@ -170,22 +166,17 @@ describe('Notification System', () => {
 
   it('tracks faked notifications and supports assertion helpers', async () => {
     const user = { id: 2, email: 'grace@example.com' }
-    await Notifications.send(user, new InvoicePaid({ id: 8, amount: 500, webhookUrl: 'https://example.com/webhook', sms: '+15550002' }))
+    await Notifications.send(user, new InvoicePaid({ id: 8, amount: 500, webhookUrl: 'https://example.com/webhook' }))
 
     expect(() => Notifications.assertSent('InvoicePaid', user)).not.toThrow()
     expect(() => Notifications.assertNothingSent()).toThrow()
-  })
-
-  it('supports sms placeholder channel without throwing', async () => {
-    const notification = new InvoicePaid({ id: 9, amount: 250, webhookUrl: 'https://example.com/webhook', sms: '+15550003' })
-    expect(notification.toSms()).toEqual({ to: '+15550003', body: 'Invoice 9 paid.' })
   })
 
   it('posts webhook payloads', async () => {
     const fetchSpy = vi.fn(global.fetch)
     global.fetch = fetchSpy as typeof fetch
 
-    await Notifications.send({ id: 3, email: 'linus@example.com' }, new InvoicePaid({ id: 10, amount: 400, webhookUrl: 'https://example.com/hook', sms: '+15550004' }))
+    await Notifications.send({ id: 3, email: 'linus@example.com' }, new InvoicePaid({ id: 10, amount: 400, webhookUrl: 'https://example.com/hook' }))
 
     expect(fetchSpy).toHaveBeenCalledWith('https://example.com/hook', expect.objectContaining({
       method: 'POST',
@@ -244,8 +235,6 @@ describe('Mail and Notification Parity', () => {
     app.config.set('mail.from', { address: 'hello@example.com', name: 'Maxima' })
     app.config.set('filesystems.default', 'local')
     app.config.set('filesystems.disks.local', { driver: 'local', root })
-    app.config.set('sms.default', 'http')
-    app.config.set('sms.channels.http', { driver: 'http', url: 'https://sms.example.com/send' })
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
       client: 'sqlite3',
@@ -317,7 +306,6 @@ describe('Mail and Notification Parity', () => {
     expect(() => Notifications.assertSent('RichNotification', notifiable)).not.toThrow()
     expect(() => Notifications.assertSentTo(notifiable, 'RichNotification')).not.toThrow()
     expect(await DB.table('notifications').first()).toMatchObject({ type: 'RichNotification' })
-    expect(global.fetch).toHaveBeenCalledWith('https://sms.example.com/send', expect.objectContaining({ method: 'POST' }))
     expect(global.fetch).toHaveBeenCalledWith('https://slack.example.com/hook', expect.objectContaining({
       body: expect.stringContaining('"blocks"')
     }))
@@ -356,6 +344,44 @@ class MockNotifiable {
   }
 }
 
+class PartialRouteNotifiable {
+  public phone = '+15550001'
+  public slack_webhook_url = 'https://slack.example.com/fallback'
+
+  constructor(public id: number, public email: string) {}
+
+  routeNotificationFor(driver: string) {
+    if (driver === 'mail') return 'routed@example.com'
+    return undefined
+  }
+
+  receivesBroadcastNotificationsOn() {
+    return 'private-partial-route'
+  }
+}
+
+class PartialRouteNotification extends Notification {
+  via() { return ['mail', 'webhook', 'vonage', 'slack'] }
+  toMail() { return new TestMail() }
+  toWebhook() { return { url: 'https://webhook.example.com/fallback', payload: { ok: true } } }
+  toVonage() { return new VonageMessage('Fallback Vonage').from('Maxima') }
+  toSlack() { return 'Fallback Slack!' }
+}
+
+class MailFallbackNotifiable {
+  public slack_webhook_url = 'https://slack.example.com/fallback-mail'
+  constructor(public id: number, public email: string) {}
+  routeNotificationFor(driver: string) {
+    if (driver === 'mail') return undefined
+    return null
+  }
+}
+
+class MailFallbackNotification extends Notification {
+  via() { return ['mail'] }
+  toMail() { return new TestMail() }
+}
+
 class TestMail extends Mailable {
   subject() { return 'Mail Subject' }
 }
@@ -387,6 +413,7 @@ describe('Notification Channels & Routing', () => {
   afterEach(() => {
     Broadcast.restore()
     Mail.restore()
+    Event.restore()
     vi.restoreAllMocks()
   })
 
@@ -422,5 +449,29 @@ describe('Notification Channels & Routing', () => {
     expect(broadcastedPayload.name).toBe('NotificationSent')
     expect(broadcastedPayload.channels).toBe('private-notif-channel')
     expect(broadcastedPayload.payload.data).toEqual({ info: 'broadcast data' })
+  })
+
+  it('falls back to notification and model routes when routeNotificationFor returns undefined', async () => {
+    const notifiable = new PartialRouteNotifiable(2, 'partial@example.com')
+    const notification = new PartialRouteNotification()
+
+    Event.fake()
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response())
+
+    await Notifications.send(notifiable, notification)
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://webhook.example.com/fallback', expect.objectContaining({ method: 'POST' }))
+    expect(fetchSpy).toHaveBeenCalledWith('https://slack.example.com/fallback', expect.objectContaining({ method: 'POST' }))
+    Event.assertDispatched('NotificationSent', event => event.channel === 'vonage' && event.response?.to === '+15550001')
+  })
+
+  it('falls back to the notifiable email when the mail route is undefined', async () => {
+    const notifiable = new MailFallbackNotifiable(3, 'fallback@example.com')
+
+    await Notifications.send(notifiable, new MailFallbackNotification())
+
+    expect(Mail.sentMails()).toHaveLength(1)
+    expect(Mail.sentMails()[0].to).toBe('fallback@example.com')
   })
 })

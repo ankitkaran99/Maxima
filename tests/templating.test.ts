@@ -174,6 +174,19 @@ describe('Templating', () => {
     expect(html).toContain('3 apples')
   })
 
+  it('supports the documented @empty directive without rewriting it to @else', async () => {
+    await fs.writeFile(path.join(root, 'resources', 'views', 'empty.edge'), `
+      @empty(items)
+        No items
+      @endempty
+    `)
+
+    const factory = new ViewFactory(path.join(root, 'resources'))
+
+    await expect(factory.render('empty', { items: [] })).resolves.toContain('No items')
+    await expect(factory.render('empty', { items: ['Ada'] })).resolves.not.toContain('No items')
+  })
+
   it('supports non-Edge Blade directives without component or alias shims', async () => {
     await fs.writeFile(path.join(root, 'resources', 'views', 'blade-directives.edge'), `
       {{-- hidden --}}
@@ -240,6 +253,24 @@ describe('Templating', () => {
     await fs.writeFile(path.join(root, 'resources', 'views', 'cached.edge'), 'Second')
 
     await expect(factory.render('cached')).resolves.toContain('Second')
+  })
+
+  it('invalidates compiled view cache when a layout changes', async () => {
+    const cacheDir = path.join(root, 'storage', 'framework', 'views')
+    await fs.mkdir(path.join(root, 'resources', 'views', 'layouts'), { recursive: true })
+    await fs.writeFile(path.join(root, 'resources', 'views', 'layouts', 'app.edge'), '<main>@yield(\'content\')</main>')
+    await fs.writeFile(path.join(root, 'resources', 'views', 'page.edge'), `
+      @extends('layouts/app')
+      @section('content')
+        <p>One</p>
+      @endsection
+    `)
+    const factory = new ViewFactory(path.join(root, 'resources'), cacheDir)
+
+    await expect(factory.render('page')).resolves.toContain('<main>')
+    await fs.writeFile(path.join(root, 'resources', 'views', 'layouts', 'app.edge'), '<section>@yield(\'content\')</section>')
+
+    await expect(factory.render('page')).resolves.toContain('<section>')
   })
 
   it('recompiles when a compiled view cache file is corrupt', async () => {

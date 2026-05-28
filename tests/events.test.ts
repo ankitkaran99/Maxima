@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -242,5 +242,30 @@ describe('Event Providers & Listener Middleware Parity', () => {
     expect(() => Event.assertDispatched('OrderPlaced', event => event.id === 42)).not.toThrow()
     expect(() => Event.assertNotDispatched('OtherEvent')).not.toThrow()
     expect(() => Queue.assertPushed('QueuedClosure')).not.toThrow()
+  })
+
+  it('dispatches queued listeners with distinct queue and connection settings', async () => {
+    class OrderShipped {
+      constructor(public id: number) {}
+    }
+
+    class AlertsListener {
+      queue = true
+      connection = 'redis'
+      queueName = 'alerts'
+      handle() {}
+    }
+
+    const pushSpy = vi.spyOn(Queue, 'push')
+    Event.register({
+      listen: {
+        OrderShipped: AlertsListener
+      }
+    })
+
+    await Event.dispatchAsync(new OrderShipped(7))
+
+    expect(pushSpy).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({}), 'alerts', 'redis')
+    pushSpy.mockRestore()
   })
 })

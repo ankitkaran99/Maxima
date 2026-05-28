@@ -48,7 +48,12 @@ export function str(value: any = '') {
 
 export const Arr = {
   get(object: any, key: string, defaultValue?: any) {
-    return key.split('.').reduce((carry, segment) => carry?.[segment], object) ?? defaultValue
+    let current = object
+    for (const segment of key.split('.')) {
+      if (current === undefined || current === null || !(segment in Object(current))) return defaultValue
+      current = current[segment]
+    }
+    return current ?? defaultValue
   },
   set(object: any, key: string, value: any) {
     const segments = key.split('.')
@@ -58,7 +63,12 @@ export const Arr = {
     return object
   },
   has(object: any, key: string) {
-    return Arr.get(object, key) !== undefined
+    let current = object
+    for (const segment of key.split('.')) {
+      if (current === undefined || current === null || !(segment in Object(current))) return false
+      current = current[segment]
+    }
+    return true
   },
   forget(object: any, key: string) {
     const segments = key.split('.')
@@ -71,7 +81,8 @@ export const Arr = {
     return Object.fromEntries(keys.filter(key => key in object).map(key => [key, object[key]]))
   },
   except(object: any, keys: string[]) {
-    return Object.fromEntries(Object.entries(object).filter(([key]) => !keys.includes(key)))
+    const excluded = new Set(keys)
+    return Object.fromEntries(Object.entries(object).filter(([key]) => !excluded.has(key)))
   },
   wrap(value: any) { return Array.isArray(value) ? value : value === undefined || value === null ? [] : [value] },
   flatten(value: any[], depth = Infinity) { return value.flat(depth) }

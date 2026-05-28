@@ -298,6 +298,9 @@ Response.macro('capsJson', function(this: Response, data: Record<string, string>
 
 All exceptions thrown during HTTP requests are caught and routed to the `ExceptionHandler` class to log and render readable responses.
 
+> [!NOTE]
+> If a non-`Error` object (such as a string, e.g. `throw 'Something Failed'`) is thrown, Maxima automatically normalizes it into a standard `Error` instance. This ensures that the debug page can correctly parse and display the stack trace, source code excerpt, and error message.
+
 ### Custom Exception Handler setup
 
 You can override logging/rendering rules within `src/app/Exceptions/Handler.ts` (extending `ExceptionHandler`):

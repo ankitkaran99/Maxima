@@ -47,6 +47,7 @@ describe('Configuration', () => {
     const configDir = path.join(root, 'config')
     await fs.mkdir(configDir)
     await fs.writeFile(path.join(configDir, 'app.js'), 'export default { name: "Maxima", http: { port: 3000 } }\n')
+    await fs.writeFile(path.join(configDir, 'types.d.ts'), 'export default { broken: true }\n')
 
     const config = new ConfigRepository()
     await config.load(configDir)
@@ -57,6 +58,7 @@ describe('Configuration', () => {
     expect(config.get('app.http.host')).toBe('127.0.0.1')
     expect(config.has('app.http.host')).toBe(true)
     expect(config.get('app.missing', 'fallback')).toBe('fallback')
+    expect(config.has('types')).toBe(false)
   })
 
   it('loads cached config before source config files', async () => {

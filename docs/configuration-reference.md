@@ -146,7 +146,3 @@ See [Rate Limiting And Security Middleware](./rate-limiting-security.md).
 - `lifetime`: session lifetime in minutes.
 - `cookie`: name, HTTP-only, secure, signed, encrypted, same-site, and path attributes.
 - `stores`: backing store configuration.
-
-## SMS
-
-`config/sms.ts` defines SMS channel defaults. Built-in channel drivers include `console`, `log`, `http`, and `null`.

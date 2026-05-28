@@ -14,7 +14,7 @@ export class ConfigRepository {
 
     this.items = {}
     const files = await fs.readdir(directory).catch(() => [])
-    for (const file of files.filter(file => file.endsWith('.js') || file.endsWith('.ts'))) {
+    for (const file of files.filter(isConfigModule)) {
       const key = path.basename(file).replace(/\.(js|ts)$/, '')
       const mod = await import(`${toFileUrl(path.join(directory, file))}?t=${Date.now()}`)
       this.items[key] = mod.default ?? mod
@@ -47,4 +47,8 @@ export class ConfigRepository {
     await fs.mkdir(path.dirname(target), { recursive: true })
     await fs.writeFile(target, JSON.stringify(this.items, null, 2))
   }
+}
+
+function isConfigModule(file: string) {
+  return (file.endsWith('.js') || file.endsWith('.ts')) && !file.endsWith('.d.ts')
 }
