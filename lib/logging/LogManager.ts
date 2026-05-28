@@ -1,4 +1,3 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import pino, { type Logger as PinoLogger } from 'pino'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -145,8 +144,7 @@ export class LogManager {
       return logger
     } catch (error) {
       const emergencyPath = storagePath('logs/emergency.log')
-      fs.mkdirSync(path.dirname(emergencyPath), { recursive: true })
-      const logger = new Logger([pino({ level: 'debug' }, pino.destination(emergencyPath))], {}, this.processors)
+      const logger = new Logger([pino({ level: 'debug' }, pino.destination({ dest: emergencyPath, mkdir: true }))], {}, this.processors)
       logger.error(error as Error)
       return logger
     }
@@ -157,8 +155,8 @@ export class LogManager {
     if (channel.driver === 'stack') return this.stack(channel.channels ?? [])
     if (channel.driver === 'null') return new Logger([pino({ level: 'silent' })], {}, this.processors)
     if (['file', 'daily', 'single'].includes(channel.driver)) {
-      fs.mkdirSync(path.dirname(channel.path ?? storagePath('logs/maxima.log')), { recursive: true })
-      return new Logger([pino({ level: channel.level ?? 'info' }, pino.destination(channel.path ?? storagePath('logs/maxima.log')))], {}, this.processors)
+      const logPath = channel.path ?? storagePath('logs/maxima.log')
+      return new Logger([pino({ level: channel.level ?? 'info' }, pino.destination({ dest: logPath, mkdir: true }))], {}, this.processors)
     }
     if (['slack', 'webhook', 'papertrail', 'syslog', 'errorlog'].includes(channel.driver)) {
       return new Logger([pino({ level: channel.level ?? (channel.driver === 'slack' ? 'critical' : 'error') })], {}, this.processors)

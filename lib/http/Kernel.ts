@@ -554,16 +554,27 @@ export class HttpKernel {
     try {
       const { ViewFactory } = await import('@lib/view/ViewFactory.js')
       let viewFactory = await this.app.make<any>(ViewFactory)
-      if (!viewFactory.exists(template)) {
+      if (!await viewFactory.exists(template)) {
         let frameworkRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
         if (path.basename(frameworkRoot) === 'dist') {
           frameworkRoot = path.dirname(frameworkRoot)
         }
-        const bundledViews = fs.existsSync(path.join(frameworkRoot, 'src', 'resources'))
-          ? path.join(frameworkRoot, 'src', 'resources')
+        const bundledViewsDir = path.join(frameworkRoot, 'src', 'resources')
+        let existsBundledViews = false
+        try {
+          await fs.promises.access(bundledViewsDir)
+          existsBundledViews = true
+        } catch {}
+        const bundledViews = existsBundledViews
+          ? bundledViewsDir
           : path.join(frameworkRoot, 'resources')
         const bundledTemplate = path.join(bundledViews, 'views', template.replaceAll('.', '/') + '.edge')
-        if (fs.existsSync(bundledTemplate)) {
+        let existsBundledTemplate = false
+        try {
+          await fs.promises.access(bundledTemplate)
+          existsBundledTemplate = true
+        } catch {}
+        if (existsBundledTemplate) {
           viewFactory = new ViewFactory(bundledViews, storagePath('framework/views'))
         }
       }
@@ -578,16 +589,27 @@ export class HttpKernel {
     try {
       const { ViewFactory } = await import('@lib/view/ViewFactory.js')
       let viewFactory = await this.app.make<any>(ViewFactory)
-      if (!viewFactory.exists('errors.debug')) {
+      if (!await viewFactory.exists('errors.debug')) {
         let frameworkRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
         if (path.basename(frameworkRoot) === 'dist') {
           frameworkRoot = path.dirname(frameworkRoot)
         }
-        const bundledViews = fs.existsSync(path.join(frameworkRoot, 'src', 'resources'))
-          ? path.join(frameworkRoot, 'src', 'resources')
+        const bundledViewsDir = path.join(frameworkRoot, 'src', 'resources')
+        let existsBundledViews = false
+        try {
+          await fs.promises.access(bundledViewsDir)
+          existsBundledViews = true
+        } catch {}
+        const bundledViews = existsBundledViews
+          ? bundledViewsDir
           : path.join(frameworkRoot, 'resources')
         const bundledTemplate = path.join(bundledViews, 'views', 'errors', 'debug.edge')
-        if (fs.existsSync(bundledTemplate)) {
+        let existsBundledTemplate = false
+        try {
+          await fs.promises.access(bundledTemplate)
+          existsBundledTemplate = true
+        } catch {}
+        if (existsBundledTemplate) {
           viewFactory = new ViewFactory(bundledViews, storagePath('framework/views'))
         }
       }

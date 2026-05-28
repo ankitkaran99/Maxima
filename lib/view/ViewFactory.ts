@@ -1,7 +1,6 @@
 import { Edge } from 'edge.js'
 import { migrate } from 'edge.js/plugins/migrate'
 import fs from 'node:fs/promises'
-import fsSync from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { app, env, resourcePath, storagePath, trans, transChoice } from '@lib/foundation/helpers.js'
@@ -51,6 +50,7 @@ export class ViewFactory {
   private compilationPromises = new Map<string, Promise<string>>()
   private compiledCache = new LruCache<string, string>(Number(env('VIEW_CACHE_LIMIT', 100)))
   private hashCache = new LruCache<string, string>(Number(env('VIEW_HASH_CACHE_LIMIT', 100)))
+  private existenceCache = new Map<string, boolean>()
 
   constructor(private rootPath = resourcePath(), compiledPath = storagePath('framework/views')) {
     this.compiledPath = compiledPath
@@ -136,7 +136,7 @@ export class ViewFactory {
   }
 
   render(template: string, data: Record<string, unknown> = {}) {
-    return this.renderTemplate(template.replaceAll('.', '/'), data)
+    return this.renderTemplate(template, data)
   }
 
   renderEmail(template: string, data: Record<string, unknown> = {}) {
@@ -149,7 +149,7 @@ export class ViewFactory {
   }
 
   async renderFragment(template: string, fragment: string, data: Record<string, unknown> = {}) {
-    const file = this.resolveViewPath(template.replaceAll('.', '/'))
+    const file = this.resolveViewPath(template)
     const contents = await this.applyLayout(await fs.readFile(file, 'utf8'), file)
     const pattern = new RegExp(`@fragment\\(\\s*['"]${this.escapeRegExp(fragment)}['"]\\s*\\)([\\s\\S]*?)@endfragment\\b`)
     const match = contents.match(pattern)
@@ -158,12 +158,33 @@ export class ViewFactory {
     return this.edge.renderRaw(compiled, this.baseData(data), `fragment:${template}:${fragment}:${this.cacheKey(compiled)}`)
   }
 
-  exists(template: string) {
-    return fsSync.existsSync(this.resolveViewPath(template.replaceAll('.', '/')))
+  async exists(template: string): Promise<boolean> {
+    const filePath = this.resolveViewPath(template)
+    if (this.existenceCache.has(filePath)) {
+      return this.existenceCache.get(filePath)!
+    }
+    let existsResult = false
+    try {
+      await fs.access(filePath)
+      existsResult = true
+    } catch {
+      existsResult = false
+    }
+    const isProduction = env('APP_ENV') === 'production' || env('CACHE_VIEWS') === 'true' || env('CACHE_VIEWS') === true
+    if (isProduction) {
+      this.existenceCache.set(filePath, existsResult)
+    }
+    return existsResult
   }
 
   async first(templates: string[], data: Record<string, unknown> = {}) {
-    const match = templates.find(template => this.exists(template))
+    let match: string | undefined
+    for (const template of templates) {
+      if (await this.exists(template)) {
+        match = template
+        break
+      }
+    }
     if (!match) throw new Error(`None of the requested views exist: ${templates.join(', ')}`)
     return this.render(match, data)
   }
@@ -171,7 +192,11 @@ export class ViewFactory {
   async cacheViews() {
     await fs.mkdir(this.compiledPath, { recursive: true })
     const root = path.join(this.rootPath, 'views')
-    if (!fsSync.existsSync(root)) return []
+    try {
+      await fs.access(root)
+    } catch {
+      return []
+    }
     const files = await this.viewFiles(root)
     const compiled: string[] = []
     for (const file of files) {
@@ -200,7 +225,7 @@ export class ViewFactory {
       sections.set(match[1], match[2])
     }
 
-    const layoutFile = path.join(this.rootPath, 'views', `${layoutMatch[1]}.edge`)
+    const layoutFile = path.join(this.rootPath, 'views', `${layoutMatch[1].replaceAll('.', '/')}.edge`)
     let layout = await fs.readFile(layoutFile, 'utf8')
     layout = layout.replace(/@yield\(\s*['"]([^'"]+)['"]\s*\)/g, (_match, name) => sections.get(name) ?? '')
     layout = layout.replace(sectionPattern, (_match, name, fallback) => {
@@ -462,7 +487,8 @@ export class ViewFactory {
   }
 
   private resolveViewPath(template: string) {
-    return path.join(this.rootPath, 'views', `${template}.edge`)
+    const relativePath = template.replaceAll('.', '/')
+    return path.join(this.rootPath, 'views', `${relativePath}.edge`)
   }
 
   private async compiledTemplate(file: string, template: string) {
@@ -474,7 +500,7 @@ export class ViewFactory {
 
     let promise = this.compilationPromises.get(file)
     if (!promise) {
-      promise = this.doCompileTemplate(file, template).finally(() => {
+      promise = this.doCompileTemplate(file, template, isProduction).finally(() => {
         this.compilationPromises.delete(file)
       })
       this.compilationPromises.set(file, promise)
@@ -486,13 +512,16 @@ export class ViewFactory {
     return compiled
   }
 
-  private async doCompileTemplate(file: string, template: string) {
-    const stat = await fs.stat(file)
+  private async doCompileTemplate(file: string, template: string, isProduction: boolean) {
     const cacheFile = path.join(this.compiledPath, `${crypto.createHash('sha1').update(file).digest('hex')}.edge`)
-    if (fsSync.existsSync(cacheFile)) {
-      try {
-        const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as CompiledCache
-        if (typeof cached.compiled === 'string' && cached.mtimeMs >= stat.mtimeMs) {
+    try {
+      const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as CompiledCache
+      if (typeof cached.compiled === 'string') {
+        if (isProduction) {
+          return cached.compiled
+        }
+        const stat = await fs.stat(file)
+        if (cached.mtimeMs >= stat.mtimeMs) {
           if (cached.dependencyFiles?.length) {
             let valid = true
             for (const dependency of cached.dependencyFiles) {
@@ -507,10 +536,11 @@ export class ViewFactory {
             return cached.compiled
           }
         }
-      } catch {
-        // Recompile below when a cache file is stale, partial, or from an older format.
       }
+    } catch {
+      // Recompile if missing, invalid, or stale
     }
+    const stat = await fs.stat(file)
     const rawContents = await fs.readFile(file, 'utf8')
     const dependencyFiles = this.layoutDependencies(rawContents)
     const contents = await this.applyLayout(rawContents, file)
@@ -528,7 +558,7 @@ export class ViewFactory {
   private layoutDependencies(contents: string) {
     const layoutMatch = contents.match(/@extends\(\s*['"]([^'"]+)['"]\s*\)/)
     if (!layoutMatch) return []
-    const layoutFile = path.join(this.rootPath, 'views', `${layoutMatch[1]}.edge`)
+    const layoutFile = path.join(this.rootPath, 'views', `${layoutMatch[1].replaceAll('.', '/')}.edge`)
     return [layoutFile]
   }
 
