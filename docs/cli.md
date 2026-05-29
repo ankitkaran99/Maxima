@@ -99,7 +99,7 @@ npm run maxima -- valet:link maxima
 npm run maxima -- homestead:provision local
 ```
 
-`storage:link` exposes `src/storage/app/public` at `src/public/storage`. `vendor:publish` accepts `--tag stubs` and `--tag lang`.
+`storage:link` exposes `storage/app/public` at `public/storage`. `vendor:publish` accepts `--tag stubs` and `--tag lang`.
 
 ## Installers And Database Commands
 

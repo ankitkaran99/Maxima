@@ -45,19 +45,31 @@ npm run test
 
 A standard Maxima project layout aligns with classic MVC architecture:
 
+- `.env`: Environment configuration file in the project root.
+- `public/`: Static files served directly by the web server (images, stylesheets, public files).
+- `storage/`: Application storage directory containing logs, local disks, database sqlite files, etc.
 - `src/`: The application root.
   - `app/`: Contains core application logic.
+    - `Casts/`: Custom database attribute casting.
+    - `Console/`: Custom CLI commands.
+    - `Events/`: Event classes.
+    - `Exceptions/`: Exception handler.
     - `Http/`: Controllers, Middleware, Form Requests.
+    - `Listeners/`: Event listener classes.
+    - `Mail/`: Mailables.
     - `Models/`: Database model entities.
-    - `Providers/`: Custom Service Providers.
+    - `Notifications/`: Notification classes.
+    - `Policies/`: Authorization policy classes.
+    - `Providers/`: Service Providers.
+    - `Services/`: Domain/Application services.
   - `config/`: Configuration files (e.g., `database.ts`, `cache.ts`, `app.ts`).
   - `database/`: Database migrations, seeders, and factories.
-  - `public/`: Static files served directly by the web server.
   - `resources/`: Views, localization translations, and raw assets.
   - `routes/`: Web, API, and channels routing files.
-  - `storage/`: Local logs, sessions, compiled templates, and disk files.
   - `server.ts`: The web application entrypoint.
 - `lib/`: The core framework source code (caches, database, http, routing, container, etc.).
+- `tests/`: Vitest integration and unit tests.
+- `bin/`: CLI script wrapper.
 
 ---
 

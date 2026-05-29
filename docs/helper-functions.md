@@ -115,16 +115,16 @@ await ctx.run({ requestId: 'req-123' }, async () => ctx.get('requestId'));
 
 ### Path Builders
 
-- **`base_path(...segments)`**: Resolves paths relative to the project root:
+- **`base_path(...segments)`**: Resolves paths relative to the application base path (the `src/` directory):
   ```typescript
-  const path = base_path('storage', 'logs');
+  const path = base_path('routes', 'web.ts');
   ```
 - **`app_path(...segments)`**: Resolves paths relative to the `src/app/` directory.
 - **`config_path(...segments)`**: Resolves paths relative to the `src/config/` directory.
 - **`database_path(...segments)`**: Resolves paths relative to `src/database/`.
 - **`resource_path(...segments)`**: Resolves paths relative to `src/resources/`.
-- **`storage_path(...segments)`**: Resolves paths relative to `src/storage/`.
-- **`public_path(...segments)`**: Resolves paths relative to `src/public/`.
+- **`storage_path(...segments)`**: Resolves paths relative to the root `storage/` directory.
+- **`public_path(...segments)`**: Resolves paths relative to the root `public/` directory.
 
 ---
 

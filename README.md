@@ -34,10 +34,13 @@ Start with the documentation index:
 
 ## Project Layout
 
-- `src/`: application code, routes, configuration, resources, database files, public assets, and storage.
-- `lib/`: core framework source.
+- `src/`: Application code containing `app/` (core logic), `config/`, `database/`, `resources/`, and `routes/`.
+- `public/`: Public static assets served directly.
+- `storage/`: Local application storage (logs, cache, sqlite database, uploaded files).
+- `lib/`: Core framework source code.
 - `tests/`: Vitest test suite.
-- `docs/`: framework documentation.
+- `docs/`: Framework documentation.
+- `.env`: Environment configurations.
 
 ## Performance & Benchmarks
 
