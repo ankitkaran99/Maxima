@@ -4,7 +4,7 @@ This directory contains the framework documentation for Maxima.
 
 ## Start Here
 
-- [Getting Started](./getting-started.md): installation, project structure, configuration basics, and service providers.
+- [Getting Started](./getting-started.md): installation, project structure, configuration basics, service providers, and performance benchmarks.
 - [Configuration Reference](./configuration-reference.md): all shipped `src/config` files and their major keys.
 - [CLI](./cli.md): application commands, generators, cache commands, queues, migrations, and runtime tools.
 
