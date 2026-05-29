@@ -14,9 +14,5 @@ Reference docs checked:
 - https://laravel.com/docs/12.x/localization
 - https://laravel.com/docs/12.x/queues
 
-
-
-Easy Install
-Bug fixing and optimization
 Plugins = Impersonation, Permissions, LiteTable, Maxima-ImExport
 

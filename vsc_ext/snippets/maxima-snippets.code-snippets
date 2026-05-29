@@ -1,0 +1,147 @@
+{
+  "Maxima Route GET": {
+    "prefix": "mxroute-get",
+    "body": [
+      "Route.get('${1:/path}', async (${2:request}) => {",
+      "\treturn ${3:{ message: 'Hello Maxima' }};",
+      "});"
+    ],
+    "description": "Define a GET route in Maxima"
+  },
+  "Maxima Route POST": {
+    "prefix": "mxroute-post",
+    "body": [
+      "Route.post('${1:/path}', async (${2:request}) => {",
+      "\treturn ${3:{ status: 'success' }};",
+      "});"
+    ],
+    "description": "Define a POST route in Maxima"
+  },
+  "Maxima Route Group": {
+    "prefix": "mxroute-group",
+    "body": [
+      "Route.group({ prefix: '${1:/api}' }, () => {",
+      "\tRoute.get('${2:/}', async () => {",
+      "\t\treturn ${3:{ status: 'ok' }};",
+      "\t});",
+      "});"
+    ],
+    "description": "Define a Route Group in Maxima"
+  },
+  "Maxima Model Definition": {
+    "prefix": "mxmodel",
+    "body": [
+      "import { Model } from '@lib/database/Model.js';",
+      "",
+      "export class ${1:User} extends Model {",
+      "\tstatic table = '${2:users}';",
+      "\tstatic primaryKey = '${3:id}';",
+      "\tstatic timestamps = true;",
+      "",
+      "\tstatic fillable = [${4:'name', 'email'}];",
+      "\tstatic guarded = ['id'];",
+      "",
+      "\tdeclare id: number;",
+      "\t$0",
+      "}"
+    ],
+    "description": "Create a Maxima Eloquent-style model"
+  },
+  "Maxima Model Relationship hasMany": {
+    "prefix": "mxrelation-hasmany",
+    "body": [
+      "${1:posts}() {",
+      "\treturn this.hasMany(${2:Post});",
+      "}"
+    ],
+    "description": "Define a hasMany relationship on a model"
+  },
+  "Maxima Model Relationship belongsTo": {
+    "prefix": "mxrelation-belongsto",
+    "body": [
+      "${1:user}() {",
+      "\treturn this.belongsTo(${2:User});",
+      "}"
+    ],
+    "description": "Define a belongsTo relationship on a model"
+  },
+  "Maxima DB Table Query": {
+    "prefix": "mxdb-table",
+    "body": [
+      "await DB.table('${1:users}').where('${2:email}', ${3:email}).first();"
+    ],
+    "description": "Perform a DB table query in Maxima"
+  },
+  "Maxima DB Transaction": {
+    "prefix": "mxdb-transaction",
+    "body": [
+      "await DB.transaction(async (trx) => {",
+      "\tawait DB.table('${1:users}').transacting(trx).insert({ ${2:name: 'Taylor'} });",
+      "\t$0",
+      "});"
+    ],
+    "description": "Run query operations inside a Maxima database transaction"
+  },
+  "Maxima Schema Create Table": {
+    "prefix": "mxschema-create",
+    "body": [
+      "await Schema.create('${1:users}', (table) => {",
+      "\ttable.increments('id');",
+      "\ttable.string('${2:name}').notNullable();",
+      "\ttable.string('${3:email}').unique().notNullable();",
+      "\ttable.timestamps();",
+      "});"
+    ],
+    "description": "Create a database table migration with Schema builder"
+  },
+  "Maxima Controller Class": {
+    "prefix": "mxcontroller",
+    "body": [
+      "export class ${1:UserController} {",
+      "\tasync index(request, reply) {",
+      "\t\treturn ${2:{ data: [] }};",
+      "\t}",
+      "",
+      "\tasync show(request, reply) {",
+      "\t\tconst id = request.params.id;",
+      "\t\treturn ${3:{ id }};",
+      "\t}",
+      "}"
+    ],
+    "description": "Create a Maxima controller class"
+  },
+  "Maxima Middleware Class": {
+    "prefix": "mxmiddleware",
+    "body": [
+      "export class ${1:EnsureTokenIsValid} {",
+      "\tasync handle(request, reply, next) {",
+      "\t\tconst token = request.header('x-api-token');",
+      "",
+      "\t\tif (token !== 'secret-token') {",
+      "\t\t\treturn reply.code(401).send({ error: 'Unauthorized token' });",
+      "\t\t}",
+      "",
+      "\t\tawait next();",
+      "\t}",
+      "}"
+    ],
+    "description": "Create a Maxima middleware class"
+  },
+  "Maxima Service Provider": {
+    "prefix": "mxprovider",
+    "body": [
+      "import { ServiceProvider } from '@lib/container/Container.js';",
+      "",
+      "export class ${1:BillingServiceProvider} extends ServiceProvider {",
+      "\tasync register() {",
+      "\t\tthis.app.singleton(${2:BillingService}, () => new ${2:BillingService}(this.app.make('config')));",
+      "\t}",
+      "",
+      "\tasync boot() {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ],
+    "description": "Create a Maxima service provider"
+  }
+}

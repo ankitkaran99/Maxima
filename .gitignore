@@ -1,3 +1,5 @@
 node_modules/*
 dist/
 storage/*
+vsc_ext/node_modules/*
+vsc_ext/out/*

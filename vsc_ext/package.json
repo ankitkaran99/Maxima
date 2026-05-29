@@ -1,0 +1,239 @@
+{
+  "name": "maxima-vscode",
+  "displayName": "Maxima Framework Assistant",
+  "description": "Developer productivity tools for the Maxima TypeScript Framework (routing, database, schema, migrations, generators, and more).",
+  "version": "0.1.0",
+  "publisher": "maxima",
+  "icon": "maxima.png",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "maxima.runDevServer",
+        "title": "Maxima: Start Development Server",
+        "category": "Maxima",
+        "icon": "$(play)"
+      },
+      {
+        "command": "maxima.stopDevServer",
+        "title": "Maxima: Stop Development Server",
+        "category": "Maxima",
+        "icon": "$(terminate)"
+      },
+      {
+        "command": "maxima.runMigrations",
+        "title": "Maxima: Run Database Migrations (migrate)",
+        "category": "Maxima",
+        "icon": "$(database)"
+      },
+      {
+        "command": "maxima.rollbackMigrations",
+        "title": "Maxima: Rollback Migrations (migrate:rollback)",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.refreshMigrations",
+        "title": "Maxima: Refresh Migrations (migrate:refresh)",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.freshMigrations",
+        "title": "Maxima: Fresh Migrations & Seed (migrate:fresh)",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.dbSeed",
+        "title": "Maxima: Run Database Seeders (db:seed)",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeController",
+        "title": "Maxima: Generate Controller",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeModel",
+        "title": "Maxima: Generate Model",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeMigration",
+        "title": "Maxima: Generate Migration",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeMiddleware",
+        "title": "Maxima: Generate Middleware",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeRequest",
+        "title": "Maxima: Generate Form Request",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeNotification",
+        "title": "Maxima: Generate Notification",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeMail",
+        "title": "Maxima: Generate Mail",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.makeJob",
+        "title": "Maxima: Generate Queue Job",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.clearCache",
+        "title": "Maxima: Clear Application Cache (optimize:clear)",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.optimize",
+        "title": "Maxima: Cache Config & Routes (optimize)",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.routeList",
+        "title": "Maxima: List Application Routes",
+        "category": "Maxima",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "maxima.horizonStatus",
+        "title": "Maxima: Check Horizon Queue Status",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.runTests",
+        "title": "Maxima: Run Application Tests",
+        "category": "Maxima",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "maxima.about",
+        "title": "Maxima: Show Application Information (about)",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.openFile",
+        "title": "Maxima: Open File",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.openRouteDefinition",
+        "title": "Maxima: Open Route Definition",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.viewLatestLog",
+        "title": "Maxima: View Latest Log File",
+        "category": "Maxima",
+        "icon": "$(output)"
+      },
+      {
+        "command": "maxima.addEnvKey",
+        "title": "Maxima: Add Env Key",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.copyEnvKeyFromExample",
+        "title": "Maxima: Copy Env Key From Example",
+        "category": "Maxima"
+      },
+      {
+        "command": "maxima.createViewTemplate",
+        "title": "Maxima: Create View Template",
+        "category": "Maxima"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "maxima-sidebar",
+          "title": "Maxima",
+          "icon": "$(layers)"
+        }
+      ]
+    },
+    "views": {
+      "maxima-sidebar": [
+        {
+          "id": "maxima-commands",
+          "name": "Maxima Commands",
+          "type": "tree"
+        },
+        {
+          "id": "maxima-routes",
+          "name": "Routes Explorer",
+          "type": "tree"
+        },
+        {
+          "id": "maxima-explorer",
+          "name": "App Explorer",
+          "type": "tree"
+        }
+      ]
+    },
+    "languages": [
+      {
+        "id": "html",
+        "extensions": [
+          ".edge"
+        ]
+      }
+    ],
+    "snippets": [
+      {
+        "language": "typescript",
+        "path": "./snippets/maxima-snippets.code-snippets"
+      },
+      {
+        "language": "javascript",
+        "path": "./snippets/maxima-snippets.code-snippets"
+      }
+    ],
+    "configuration": {
+      "title": "Maxima Framework Settings",
+      "properties": {
+        "maxima.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the Maxima project root directory. Leave empty if Maxima is in the workspace root."
+        },
+        "maxima.port": {
+          "type": "integer",
+          "default": 3000,
+          "markdownDescription": "Port number to run the development server on."
+        },
+        "maxima.runInBackground": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Run the Maxima development server in the background (using VS Code Tasks API) instead of launching a user-visible terminal."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.11.18",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.4"
+  }
+}

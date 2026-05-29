@@ -711,6 +711,7 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
     .option('-m, --method <method>', 'Filter routes by HTTP method')
     .option('-p, --path <path>', 'Filter routes by path')
     .option('-n, --name <name>', 'Filter routes by name')
+    .option('--json', 'Output routes as JSON')
     .action(async (options) => {
       const app = await bootstrap()
       await loadRouteFiles(app.rootPath)
@@ -725,6 +726,16 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
       }
       if (options.name) {
         routes = routes.filter(r => r.name?.toLowerCase().includes(options.name.toLowerCase()))
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify(routes.map(route => ({
+          method: route.method,
+          path: route.path,
+          name: route.name ?? '',
+          middleware: route.middleware
+        }))))
+        return
       }
 
       console.table(routes.map(route => ({
