@@ -2,7 +2,7 @@
   "name": "maxima-vscode",
   "displayName": "Maxima Framework Assistant",
   "description": "Developer productivity tools for the Maxima TypeScript Framework (routing, database, schema, migrations, generators, and more).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "maxima",
   "icon": "maxima.png",
   "engines": {

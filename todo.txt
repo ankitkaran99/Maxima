@@ -1,3 +1,2 @@
-switch to bullmq + mjml for mails
-Plugins = Impersonation, Permissions, LiteTable, Maxima-ImExport
+Plugins = Bouncer, LiteTable, ImEx
 

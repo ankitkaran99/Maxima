@@ -488,6 +488,64 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
       ];
       this.addMethods(completions, 'Validator', methods);
     }
+    else if (lineText.endsWith('Bouncer.') || lineText.endsWith('BouncerManager.')) {
+      const parent = lineText.endsWith('Bouncer.') ? 'Bouncer' : 'BouncerManager';
+      const methods: MethodSuggestion[] = [
+        { name: 'assign', desc: 'Assign a role to a user', snippet: "assign('${1:role}').to(${2:user})" },
+        { name: 'retract', desc: 'Retract a role from a user', snippet: "retract('${1:role}').from(${2:user})" },
+        { name: 'allow', desc: 'Grant an ability to a user or role', snippet: "allow(${1:userOrRole}).to('${2:ability}'${3:, subject})" },
+        { name: 'disallow', desc: 'Remove a granted ability from a user or role', snippet: "disallow(${1:userOrRole}).to('${2:ability}'${3:, subject})" },
+        { name: 'forbid', desc: 'Forbid an ability to a user or role', snippet: "forbid(${1:userOrRole}).to('${2:ability}'${3:, subject})" },
+        { name: 'unforbid', desc: 'Remove a forbidden ability from a user or role', snippet: "unforbid(${1:userOrRole}).to('${2:ability}'${3:, subject})" },
+        { name: 'can', desc: 'Check if a user has a specific ability', snippet: "can(${1:user}, '${2:ability}'${3:, subject})" },
+        { name: 'isSuperAdmin', desc: 'Define a custom super admin check callback', snippet: "isSuperAdmin((${1:user}) => {\n\treturn ${2:user.role === 'admin'};\n})" }
+      ];
+      this.addMethods(completions, parent, methods);
+    }
+    else if (lineText.endsWith('ImEx.')) {
+      const methods: MethodSuggestion[] = [
+        { name: 'download', desc: 'Stream a download response of the export payload', snippet: "download(${1:response}, new ${2:ExportClass}(), '${3:filename.xlsx}')" },
+        { name: 'store', desc: 'Store the export payload onto a storage disk', snippet: "store(new ${1:ExportClass}(), '${2:path/filename.xlsx}'${3:, disk})" },
+        { name: 'import', desc: 'Parse a local path, disk file, or file Buffer and trigger import mapping hooks', snippet: "import(new ${1:ImportClass}(), ${2:filePathOrBuffer}${3:, disk})" }
+      ];
+      this.addMethods(completions, 'ImEx', methods);
+    }
+    else if (lineText.endsWith('LiteTable.')) {
+      const methods: MethodSuggestion[] = [
+        { name: 'make', desc: 'Instantiate the table builder with query and request contexts', snippet: "make(${1:query}, ${2:request})" }
+      ];
+      this.addMethods(completions, 'LiteTable', methods);
+    }
+    else if (lineText.endsWith('ImpersonateManager.')) {
+      const methods: MethodSuggestion[] = [
+        { name: 'take', desc: 'Start impersonating a user', snippet: "take(${1:request}, ${2:user})" },
+        { name: 'leave', desc: 'Stop impersonating and return to the original session', snippet: "leave(${1:request})" },
+        { name: 'canImpersonate', desc: 'Define authorization callback for who can impersonate', snippet: "canImpersonate((${1:impersonator}, ${2:target}, ${3:request}) => {\n\treturn ${4:impersonator.role === 'admin'};\n})" },
+        { name: 'canBeImpersonated', desc: 'Define authorization callback for who can be impersonated', snippet: "canBeImpersonated((${1:target}, ${2:request}) => {\n\treturn ${3:!target.is_super_admin};\n})" },
+        { name: 'isImpersonating', desc: 'Determine if the current session is impersonating another user', snippet: "isImpersonating(${1:request})" },
+        { name: 'impersonator', desc: 'Get the impersonator user instance', snippet: "impersonator(${1:request})" },
+        { name: 'impersonatorId', desc: 'Get the impersonator user ID', snippet: "impersonatorId(${1:request})" }
+      ];
+      this.addMethods(completions, 'ImpersonateManager', methods);
+    }
+    else if (/\.(?:make\([^)]*\)|columns\([^)]*\)|addIndexColumn\(\)|setRowId\([^)]*\)|defaultOrder\([^)]*\)|rawColumns\([^)]*\)|addColumn\([^)]*\)|editColumn\([^)]*\)|editColumns\([^)]*\)|filterColumn\([^)]*\)|orderColumn\([^)]*\)|setExportHeaders\([^)]*\))\.$/.test(lineText)) {
+      const liteTableMethods = [
+        { name: 'columns', desc: 'Set explicit array of column configurations', snippet: "columns([$1])" },
+        { name: 'addIndexColumn', desc: 'Add sequential index column DT_RowIndex', snippet: 'addIndexColumn()' },
+        { name: 'setRowId', desc: 'Resolve the DT_RowId using a model field key or custom callback', snippet: "setRowId('${1:id}')" },
+        { name: 'defaultOrder', desc: 'Set default order fallback column and direction', snippet: "defaultOrder('${1:column}', '${2:asc}')" },
+        { name: 'rawColumns', desc: 'Prevent HTML escaping on specific columns', snippet: "rawColumns([$1])" },
+        { name: 'addColumn', desc: 'Append a new column with a mapping callback', snippet: "addColumn('${1:key}', (${2:row}) => {\n\treturn $3;\n})" },
+        { name: 'editColumn', desc: 'Edit the output of an existing column', snippet: "editColumn('${1:key}', (${2:row}, ${3:rawValue}) => {\n\treturn $4;\n})" },
+        { name: 'editColumns', desc: 'Edit multiple column values using a shared mapping function', snippet: "editColumns([$1], (${2:rawValue}) => {\n\treturn $3;\n})" },
+        { name: 'filterColumn', desc: 'Register a custom DB query filter for a specific column', snippet: "filterColumn('${1:key}', (${2:query}, ${3:keyword}) => {\n\t$4\n})" },
+        { name: 'orderColumn', desc: 'Register a custom DB query sort for a specific column', snippet: "orderColumn('${1:key}', (${2:query}, ${3:direction}) => {\n\t$4\n})" },
+        { name: 'setExportHeaders', desc: 'Set header names for CSV export', snippet: "setExportHeaders([$1])" },
+        { name: 'render', desc: 'Process request and send Datatables formatted JSON response payload', snippet: "render(${1:response})" },
+        { name: 'export', desc: 'Filter the query and stream downloading a mapped CSV file', snippet: "export(${1:response}, (${2:row}) => [\n\t$3\n], '${4:filename}')" }
+      ];
+      this.addMethods(completions, 'LiteTableInstance', liteTableMethods);
+    }
     // 8. Check for Table Builder schema definitions (e.g. table., builder.)
     else if (lineText.endsWith('table.') || lineText.endsWith('builder.')) {
       const varName = lineText.endsWith('table.') ? 'table' : 'builder';
@@ -537,7 +595,12 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
           { name: 'Queue', desc: 'Maxima Queue Facade' },
           { name: 'Event', desc: 'Maxima Event Dispatcher' },
           { name: 'Schedule', desc: 'Maxima Scheduler Facade' },
-          { name: 'Model', desc: 'Maxima Eloquent Model base class' }
+          { name: 'Model', desc: 'Maxima Eloquent Model base class' },
+          { name: 'Bouncer', desc: 'Maxima Bouncer Authorization Facade' },
+          { name: 'BouncerManager', desc: 'Maxima Bouncer Authorization Manager' },
+          { name: 'LiteTable', desc: 'Maxima LiteTable Data Table Builder' },
+          { name: 'ImEx', desc: 'Maxima ImEx Import/Export Facade' },
+          { name: 'ImpersonateManager', desc: 'Maxima User Impersonation Facade/Manager' }
         ];
 
         for (const c of classes) {
@@ -690,7 +753,7 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
   }
 
   private getMiddlewareKeys(rootPath: string): string[] {
-    const keys: string[] = [];
+    const keys: string[] = ['tenant', 'impersonating', 'block_impersonated'];
     const mConfig = path.join(rootPath, 'src', 'config', 'middleware.ts');
     if (!fs.existsSync(mConfig)) return keys;
 
@@ -702,7 +765,10 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
         const keyRegex = /\b([a-zA-Z0-9_-]+)\s*:/g;
         let match;
         while ((match = keyRegex.exec(aliasesMatch[1])) !== null) {
-          keys.push(match[1]);
+          const key = match[1];
+          if (!keys.includes(key)) {
+            keys.push(key);
+          }
         }
       }
 
@@ -711,7 +777,10 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
         const keyRegex = /\b([a-zA-Z0-9_-]+)\s*:/g;
         let match;
         while ((match = keyRegex.exec(groupsMatch[1])) !== null) {
-          keys.push(match[1]);
+          const key = match[1];
+          if (!keys.includes(key)) {
+            keys.push(key);
+          }
         }
       }
     } catch {}
@@ -780,7 +849,7 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
 
   private getAppBindings(rootPath: string): string[] {
     const keys: string[] = [
-      'auth', 'cache', 'queue', 'session', 'events', 'broadcast', 'filesystem', 'mail', 'notifications', 'router', 'validator', 'logger'
+      'auth', 'cache', 'queue', 'session', 'events', 'broadcast', 'filesystem', 'mail', 'notifications', 'router', 'validator', 'logger', 'bouncer', 'impersonate'
     ];
     
     const providers = [

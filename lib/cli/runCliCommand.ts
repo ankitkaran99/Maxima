@@ -746,42 +746,61 @@ export async function runCliCommand(argv = process.argv.slice(2)) {
       })))
     })
 
-  // Load custom commands from src/app/Console/Commands
-  const commandsPath = path.join(projectRoot(), 'app', 'Console', 'Commands')
-  if (fsSync.existsSync(commandsPath)) {
+  // Load custom commands from src/app/Console/Commands and plugins
+  const commandPaths = [
+    path.join(projectRoot(), 'app', 'Console', 'Commands')
+  ]
+
+  // Scan plugins directory
+  const pluginsDir = path.join(projectRoot(), '..', 'plugins')
+  if (fsSync.existsSync(pluginsDir)) {
     try {
-      const files = await fs.readdir(commandsPath)
-      for (const file of files) {
-        if ((file.endsWith('.ts') || file.endsWith('.js')) && !file.endsWith('.d.ts')) {
-          const filePath = path.join(commandsPath, file)
-          const mod = await import(pathToFileURL(filePath).href)
-          const CommandClass = mod.default ?? Object.values(mod).find(v => typeof v === 'function')
-          if (CommandClass && typeof CommandClass === 'function') {
-            const instance = new (CommandClass as any)()
-            const name = instance.signature ?? instance.name
-            if (name && typeof instance.handle === 'function') {
-              const parsed = parseSignature(name)
-              const cmd = program.command(parsed.command)
-              if (instance.description) cmd.description(instance.description)
-              for (const argument of parsed.arguments) cmd.argument(argument)
-              for (const option of parsed.options) cmd.option(option.flags, option.description, option.defaultValue)
-              if (Array.isArray(instance.options)) {
-                for (const opt of instance.options) {
-                  cmd.option(opt.flags, opt.description, opt.defaultValue)
+      const pluginDirs = fsSync.readdirSync(pluginsDir)
+      for (const dir of pluginDirs) {
+        const pluginCommandsPath = path.join(pluginsDir, dir, 'src', 'commands')
+        if (fsSync.existsSync(pluginCommandsPath)) {
+          commandPaths.push(pluginCommandsPath)
+        }
+      }
+    } catch {}
+  }
+
+  for (const dirPath of commandPaths) {
+    if (fsSync.existsSync(dirPath)) {
+      try {
+        const files = await fs.readdir(dirPath)
+        for (const file of files) {
+          if ((file.endsWith('.ts') || file.endsWith('.js')) && !file.endsWith('.d.ts')) {
+            const filePath = path.join(dirPath, file)
+            const mod = await import(pathToFileURL(filePath).href)
+            const CommandClass = mod.default ?? Object.values(mod).find(v => typeof v === 'function')
+            if (CommandClass && typeof CommandClass === 'function') {
+              const instance = new (CommandClass as any)()
+              const name = instance.signature ?? instance.name
+              if (name && typeof instance.handle === 'function') {
+                const parsed = parseSignature(name)
+                const cmd = program.command(parsed.command)
+                if (instance.description) cmd.description(instance.description)
+                for (const argument of parsed.arguments) cmd.argument(argument)
+                for (const option of parsed.options) cmd.option(option.flags, option.description, option.defaultValue)
+                if (Array.isArray(instance.options)) {
+                  for (const opt of instance.options) {
+                    cmd.option(opt.flags, opt.description, opt.defaultValue)
+                  }
                 }
+                cmd.action(async (...args) => {
+                  const positional = args.slice(0, parsed.arguments.length)
+                  await bootstrap()
+                  await instance.handle(cmd.opts(), ...positional)
+                })
               }
-              cmd.action(async (...args) => {
-                const positional = args.slice(0, parsed.arguments.length)
-                await bootstrap()
-                await instance.handle(cmd.opts(), ...positional)
-              })
             }
           }
         }
-      }
     } catch (err) {
       // Ignore
     }
+  }
   }
 
   await program.parseAsync(argv, { from: 'user' })

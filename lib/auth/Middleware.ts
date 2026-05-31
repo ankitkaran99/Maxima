@@ -7,7 +7,8 @@ import { Gate } from '@lib/auth/Gate.js'
 export class AuthMiddleware {
   async handle(request: Request, reply: FastifyReply, next: Next, guard = 'session') {
     Auth.setRequest(request.raw, reply)
-    if (!(await Auth.check(guard))) return reply.code(401).send({ message: 'Unauthenticated.' })
+    const activeGuard = guard || 'session'
+    if (!(await Auth.check(activeGuard))) return reply.code(401).send({ message: 'Unauthenticated.' })
     return next()
   }
 }
@@ -15,7 +16,8 @@ export class AuthMiddleware {
 export class GuestMiddleware {
   async handle(request: Request, reply: FastifyReply, next: Next, guard = 'session') {
     Auth.setRequest(request.raw, reply)
-    if (await Auth.check(guard)) return reply.redirect('/')
+    const activeGuard = guard || 'session'
+    if (await Auth.check(activeGuard)) return reply.redirect('/')
     return next()
   }
 }

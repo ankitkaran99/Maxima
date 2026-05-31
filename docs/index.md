@@ -54,6 +54,14 @@ This directory contains the framework documentation for Maxima.
 - [Support Utilities](./support-utilities.md): collections, lazy collections, strings, arrays, objects, URIs, number formatting, and macro registry.
 - [Testing](./testing.md): database assertions, response assertions, auth helpers, time travel, fakes, console testing, browser assertions, snapshots, and views.
 
+## Plugins & Extension Packages
+
+- [Bouncer (Roles & Permissions)](../plugins/bouncer/README.md): Assign roles, manage abilities, define ownership, and configure gates.
+- [LiteTable (Server-Side DataTables)](../plugins/litetable/README.md): Paginate, filter, search, sort, and export DataTables.
+- [ImEx (Import & Export)](../plugins/imex/README.md): Import spreadsheets to models or collections, and stream or store custom spreadsheet exports.
+- [Impersonation (Act-as Support)](../plugins/impersonation/README.md): Swap authenticated user context securely for admin debugging.
+- [Multi-Tenant (Tenancy Scoping)](../plugins/tenant/README.md): Isolate database connections and storage directories automatically.
+
 ## Suggested Reading Paths
 
 For building a web API: [Getting Started](./getting-started.md), [Routing & Middleware](./routing-middleware.md), [Controllers, Requests, & Responses](./controllers-requests-responses.md), [Validation & Form Requests](./validation.md), [API Resources](./api-resources.md), and [Database & ORM](./database-orm.md).

@@ -1,6 +1,7 @@
 import { env } from '@lib/index.js'
 import { FrameworkServiceProvider } from '@lib/providers/FrameworkServiceProvider.js'
 import { AppServiceProvider } from '@app/Providers/AppServiceProvider.js'
+import { TenantServiceProvider } from '@plugins/tenant/src/index.js'
 
 export default {
   name: env('APP_NAME', 'Maxima'),
@@ -14,6 +15,7 @@ export default {
   port: env('APP_PORT', 3000),
   providers: [
     FrameworkServiceProvider,
+    TenantServiceProvider,
     AppServiceProvider
   ]
 }

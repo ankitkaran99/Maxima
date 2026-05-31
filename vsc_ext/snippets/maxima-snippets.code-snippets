@@ -143,5 +143,123 @@
       "}"
     ],
     "description": "Create a Maxima service provider"
+  },
+  "Maxima Bouncer Allow": {
+    "prefix": "mxbouncer-allow",
+    "body": [
+      "await Bouncer.allow(${1:userOrRole}).to('${2:ability}'${3:, subject});"
+    ],
+    "description": "Grant a permission or role ability using Bouncer"
+  },
+  "Maxima Bouncer Assign": {
+    "prefix": "mxbouncer-assign",
+    "body": [
+      "await Bouncer.assign('${1:role}').to(${2:user});"
+    ],
+    "description": "Assign a role to a user using Bouncer"
+  },
+  "Maxima Bouncer Check": {
+    "prefix": "mxbouncer-check",
+    "body": [
+      "if (await user.can('${1:ability}'${2:, subject})) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Check if a user has a specific ability using Bouncer"
+  },
+  "Maxima LiteTable Render": {
+    "prefix": "mxlitetable-render",
+    "body": [
+      "return await LiteTable.make(${1:query}, request)",
+      "\t.addIndexColumn()",
+      "\t.setRowId('${2:id}')",
+      "\t.addColumn('action', (${3:row}) => {",
+      "\t\treturn `<a href=\"/${4:resource}/${${3:row}.id}/edit\" class=\"btn btn-sm\">Edit</a>`;",
+      "\t})",
+      "\t.rawColumns(['action'])",
+      "\t.render(response);"
+    ],
+    "description": "Create a server-side DataTables response using LiteTable"
+  },
+  "Maxima LiteTable CSV Export": {
+    "prefix": "mxlitetable-export",
+    "body": [
+      "return await LiteTable.make(${1:query}, request)",
+      "\t.setExportHeaders([${2:'ID', 'Name'}])",
+      "\t.export(response, (${3:row}) => [",
+      "\t\t${3:row}.id,",
+      "\t\t${3:row}.name",
+      "\t], '${4:filename}');"
+    ],
+    "description": "Export database query data to a downloadable CSV using LiteTable"
+  },
+  "Maxima ImEx Export Class": {
+    "prefix": "mximex-export-class",
+    "body": [
+      "export class ${1:UsersExport} {",
+      "\theadings() {",
+      "\t\treturn [${2:'ID', 'Name', 'Email'}];",
+      "\t}",
+      "",
+      "\tmap(${3:row}: any) {",
+      "\t\treturn [",
+      "\t\t\t${3:row}.id,",
+      "\t\t\t${3:row}.name,",
+      "\t\t\t${3:row}.email",
+      "\t\t];",
+      "\t}",
+      "",
+      "\tquery() {",
+      "\t\treturn ${4:Model}.query();",
+      "\t}",
+      "}"
+    ],
+    "description": "Create an ImEx spreadsheet exporter class"
+  },
+  "Maxima ImEx Import Class": {
+    "prefix": "mximex-import-class",
+    "body": [
+      "export class ${1:UsersImport} {",
+      "\theadingRow() {",
+      "\t\treturn 1;",
+      "\t}",
+      "",
+      "\tasync model(row: any) {",
+      "\t\treturn new ${2:Model}({",
+      "\t\t\tname: row['${3:Full Name}'],",
+      "\t\t\temail: row['${4:Email Address}']",
+      "\t\t});",
+      "\t}",
+      "}"
+    ],
+    "description": "Create an ImEx spreadsheet importer class"
+  },
+  "Maxima ImEx Download": {
+    "prefix": "mximex-download",
+    "body": [
+      "await ImEx.download(response, new ${1:ExportClass}(), '${2:filename.xlsx}');"
+    ],
+    "description": "Stream an Excel or CSV download response using ImEx"
+  },
+  "Maxima ImEx Import": {
+    "prefix": "mximex-import",
+    "body": [
+      "await ImEx.import(new ${1:ImportClass}(), ${2:filePathOrBuffer});"
+    ],
+    "description": "Import spreadsheet data from path or buffer using ImEx"
+  },
+  "Maxima Impersonate Take": {
+    "prefix": "mximpersonate-take",
+    "body": [
+      "await ImpersonateManager.take(request, ${1:user});"
+    ],
+    "description": "Start impersonating a user using ImpersonateManager"
+  },
+  "Maxima Impersonate Leave": {
+    "prefix": "mximpersonate-leave",
+    "body": [
+      "await ImpersonateManager.leave(request);"
+    ],
+    "description": "Stop impersonating a user using ImpersonateManager"
   }
 }

@@ -14,9 +14,10 @@
     "paths": {
       "@lib/*": ["lib/*"],
       "@src/*": ["src/*"],
-      "@app/*": ["src/app/*"]
+      "@app/*": ["src/app/*"],
+      "@plugins/*": ["plugins/*"]
     },
     "types": ["node"]
   },
-  "include": ["lib/**/*.ts", "src/**/*.ts", "tests/**/*.ts"]
+  "include": ["lib/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "plugins/**/*.ts"]
 }

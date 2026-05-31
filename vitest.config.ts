@@ -8,7 +8,8 @@ export default defineConfig({
     alias: {
       '@lib': resolvePath('./lib'),
       '@src': resolvePath('./src'),
-      '@app': resolvePath('./src/app')
+      '@app': resolvePath('./src/app'),
+      '@plugins': resolvePath('./plugins')
     }
   }
 })
