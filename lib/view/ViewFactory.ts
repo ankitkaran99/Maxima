@@ -57,7 +57,6 @@ export class ViewFactory {
     this.edge.use(migrate)
     this.registerLoopDirectives()
     this.edge.mount(`${this.rootPath}/views`)
-    this.edge.mount('emails', `${this.rootPath}/emails`)
     this.preprocessLoadedTemplates()
     this.edge.global('authUser', undefined)
     this.edge.global('csrf_field', () => (global as any).csrf_field?.() ?? '')
@@ -139,8 +138,21 @@ export class ViewFactory {
     return this.renderTemplate(template, data)
   }
 
-  renderEmail(template: string, data: Record<string, unknown> = {}) {
-    return this.edge.render(`emails::${template.replaceAll('.', '/')}`, this.baseData(data))
+  async renderEmail(template: string, data: Record<string, unknown> = {}) {
+    const relativePath = template.replaceAll('.', '/')
+    const filePath = path.join(this.rootPath, 'emails', `${relativePath}.mjml`)
+
+    const content = await fs.readFile(filePath, 'utf8')
+    const renderedMjml = await this.edge.renderRaw(content, this.baseData(data))
+
+    let mjmlToUse = renderedMjml
+    if (!renderedMjml.includes('<mjml>')) {
+      mjmlToUse = `<mjml><mj-body><mj-section><mj-column><mj-text>${renderedMjml}</mj-text></mj-column></mj-section></mj-body></mjml>`
+    }
+
+    const mjml2html = (await import('mjml')).default
+    const result = await mjml2html(mjmlToUse)
+    return result.html
   }
 
   async renderInline(template: string, data: Record<string, unknown> = {}) {

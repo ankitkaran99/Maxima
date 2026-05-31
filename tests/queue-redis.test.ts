@@ -2,31 +2,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '@lib/foundation/Application.js'
 import { setApplication } from '@lib/foundation/helpers.js'
 
-const { beeQueueInstances, MockBeeQueue } = vi.hoisted(() => {
-  const beeQueueInstances: MockBeeQueue[] = []
-  class MockBeeQueue {
-    handler?: any
-    close = vi.fn().mockResolvedValue(undefined)
+const { bullQueueInstances, bullWorkerInstances, MockBullQueue, MockBullWorker } = vi.hoisted(() => {
+  const bullQueueInstances: MockBullQueue[] = []
+  const bullWorkerInstances: MockBullWorker[] = []
 
+  class MockBullQueue {
+    close = vi.fn().mockResolvedValue(undefined)
     constructor(public name: string, public options: any) {
-      beeQueueInstances.push(this)
+      bullQueueInstances.push(this)
     }
-    process(handler: any) {
-      this.handler = handler
-      return this
-    }
-    createJob() {
-      return {
-        retries: vi.fn().mockReturnThis(),
-        delayUntil: vi.fn().mockReturnThis(),
-        save: vi.fn().mockResolvedValue({ queued: true })
-      }
+    async add(jobName: string, payload: any, opts: any) {
+      return { name: jobName, data: payload, opts }
     }
   }
-  return { beeQueueInstances, MockBeeQueue }
+
+  class MockBullWorker {
+    close = vi.fn().mockResolvedValue(undefined)
+    constructor(public name: string, public handler: any, public options: any) {
+      bullWorkerInstances.push(this)
+    }
+  }
+
+  return { bullQueueInstances, bullWorkerInstances, MockBullQueue, MockBullWorker }
 })
 
-vi.mock('bee-queue', () => ({ default: MockBeeQueue }))
+vi.mock('bullmq', () => ({
+  Queue: MockBullQueue,
+  Worker: MockBullWorker
+}))
 
 import { Queue, type Job } from '@lib/queue/Queue.js'
 
@@ -37,7 +40,8 @@ class RedisNamedJob implements Job {
 
 describe('Queue Redis Cache', () => {
   beforeEach(() => {
-    beeQueueInstances.length = 0
+    bullQueueInstances.length = 0
+    bullWorkerInstances.length = 0
     Queue.restore()
     ;(Queue as any).queues?.clear()
 
@@ -62,16 +66,17 @@ describe('Queue Redis Cache', () => {
   afterEach(() => {
     Queue.restore()
     ;(Queue as any).queues?.clear()
-    beeQueueInstances.length = 0
+    bullQueueInstances.length = 0
+    bullWorkerInstances.length = 0
   })
 
   it('keeps separate redis queue instances per connection', async () => {
     await Queue.push(new RedisNamedJob('first'), {}, 'shared', 'redis-a')
     await Queue.push(new RedisNamedJob('second'), {}, 'shared', 'redis-b')
 
-    expect(beeQueueInstances).toHaveLength(2)
-    expect(beeQueueInstances[0]).toMatchObject({ name: 'shared', options: { redis: { url: 'redis://127.0.0.1:6379/0' } } })
-    expect(beeQueueInstances[1]).toMatchObject({ name: 'shared', options: { redis: { url: 'redis://127.0.0.1:6379/1' } } })
+    expect(bullQueueInstances).toHaveLength(2)
+    expect(bullQueueInstances[0]).toMatchObject({ name: 'shared', options: { connection: 'redis://127.0.0.1:6379/0' } })
+    expect(bullQueueInstances[1]).toMatchObject({ name: 'shared', options: { connection: 'redis://127.0.0.1:6379/1' } })
   })
 
   it('keeps redis workers registered after run so shutdown handlers can see them', async () => {
@@ -93,9 +98,9 @@ describe('Queue Redis Cache', () => {
     const worker = new QueueWorker('redis-a', { once: true })
 
     await worker.run()
-    await beeQueueInstances[0].handler({ id: 1, data: { payload: new RedisNamedJob('once') } })
+    await bullWorkerInstances[0].handler({ id: 1, data: { payload: new RedisNamedJob('once') } })
 
-    expect(beeQueueInstances[0].close).toHaveBeenCalled()
+    expect(bullWorkerInstances[0].close).toHaveBeenCalled()
     expect((QueueWorker as any).instances.has(worker)).toBe(false)
     expect(exitSpy).not.toHaveBeenCalled()
     exitSpy.mockRestore()
@@ -106,12 +111,12 @@ describe('Queue Redis Cache', () => {
     const worker = new QueueWorker('redis-a', { maxJobs: 2 })
 
     await worker.run()
-    await beeQueueInstances[0].handler({ id: 1, data: { payload: new RedisNamedJob('first') } })
-    expect(beeQueueInstances[0].close).not.toHaveBeenCalled()
+    await bullWorkerInstances[0].handler({ id: 1, data: { payload: new RedisNamedJob('first') } })
+    expect(bullWorkerInstances[0].close).not.toHaveBeenCalled()
 
-    await beeQueueInstances[0].handler({ id: 2, data: { payload: new RedisNamedJob('second') } })
+    await bullWorkerInstances[0].handler({ id: 2, data: { payload: new RedisNamedJob('second') } })
 
-    expect(beeQueueInstances[0].close).toHaveBeenCalled()
+    expect(bullWorkerInstances[0].close).toHaveBeenCalled()
     expect((QueueWorker as any).instances.has(worker)).toBe(false)
   })
 })

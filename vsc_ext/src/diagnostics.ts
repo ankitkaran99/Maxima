@@ -117,7 +117,7 @@ function runDiagnostics(document: vscode.TextDocument, collection: vscode.Diagno
       if (!viewKeys.includes(key)) {
         const diag = new vscode.Diagnostic(
           range,
-          `View template '${key}' (.edge) does not exist under src/resources/views/.`,
+          `View or email template '${key}' does not exist under src/resources/views/ or src/resources/emails/.`,
           vscode.DiagnosticSeverity.Warning
         );
         diag.code = DIAGNOSTIC_CODE_MISSING_VIEW;
@@ -130,7 +130,7 @@ function runDiagnostics(document: vscode.TextDocument, collection: vscode.Diagno
       if (!viewKeys.includes(key)) {
         const diag = new vscode.Diagnostic(
           range,
-          `View template '${key}' (.edge) does not exist under src/resources/views/.`,
+          `View or email template '${key}' does not exist under src/resources/views/ or src/resources/emails/.`,
           vscode.DiagnosticSeverity.Warning
         );
         diag.code = DIAGNOSTIC_CODE_MISSING_VIEW;
@@ -280,24 +280,29 @@ function getConfigKeys(rootPath: string): string[] {
 function getViewKeys(rootPath: string): string[] {
   const keys: string[] = [];
   const viewsDir = path.join(rootPath, 'src', 'resources', 'views');
-  if (!fs.existsSync(viewsDir)) return keys;
+  const emailsDir = path.join(rootPath, 'src', 'resources', 'emails');
 
-  const traverse = (dir: string, currentPrefix = '') => {
+  const traverse = (dir: string, currentPrefix = '', allowedExtensions = ['.edge']) => {
+    if (!fs.existsSync(dir)) return;
     const files = fs.readdirSync(dir);
     for (const file of files) {
       const fullPath = path.join(dir, file);
       const stat = fs.statSync(fullPath);
       if (stat.isDirectory()) {
-        traverse(fullPath, currentPrefix ? `${currentPrefix}.${file}` : file);
-      } else if (file.endsWith('.edge')) {
-        const name = path.basename(file, '.edge');
-        keys.push(currentPrefix ? `${currentPrefix}.${name}` : name);
+        traverse(fullPath, currentPrefix ? `${currentPrefix}.${file}` : file, allowedExtensions);
+      } else {
+        const ext = allowedExtensions.find(e => file.endsWith(e));
+        if (ext) {
+          const name = path.basename(file, ext);
+          keys.push(currentPrefix ? `${currentPrefix}.${name}` : name);
+        }
       }
     }
   };
 
   try {
-    traverse(viewsDir);
+    traverse(viewsDir, '', ['.edge']);
+    traverse(emailsDir, '', ['.mjml']);
   } catch {}
   return keys;
 }

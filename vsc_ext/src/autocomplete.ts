@@ -455,10 +455,14 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
     } 
     else if (lineText.endsWith('Queue.')) {
       const methods: MethodSuggestion[] = [
-        { name: 'push', desc: 'Push a new job onto the queue', snippet: "push(new ${1:ProcessPodcast}($2))" },
-        { name: 'later', desc: 'Push a new job onto the queue after a delay', snippet: "later(${1:delayInSeconds}, new ${2:ProcessPodcast}($3))" },
-        { name: 'bulk', desc: 'Push an array of jobs onto the queue', snippet: "bulk([new ${1:ProcessPodcast}($2)])" },
-        { name: 'size', desc: 'Get the size of a given queue', snippet: "size('${1:default}')" }
+        { name: 'dispatch', desc: 'Dispatch a job to the background queue', snippet: "dispatch(new ${1:ProcessPodcast}($2))" },
+        { name: 'dispatchSync', desc: 'Dispatch a job to run synchronously', snippet: "dispatchSync(new ${1:ProcessPodcast}($2))" },
+        { name: 'dispatchAfterResponse', desc: 'Dispatch a job to run after the HTTP response is sent', snippet: "dispatchAfterResponse(new ${1:ProcessPodcast}($2))" },
+        { name: 'push', desc: 'Push a new job onto the queue with options', snippet: "push(new ${1:ProcessPodcast}($2), ${3:{ delay: 5000 \}})" },
+        { name: 'batch', desc: 'Create a pending job batch', snippet: "batch([new ${1:ProcessPodcast}($2)])" },
+        { name: 'chain', desc: 'Create a pending job chain', snippet: "chain([new ${1:ProcessPodcast}($2)])" },
+        { name: 'fake', desc: 'Fake the queue for testing assertions', snippet: "fake()" },
+        { name: 'assertPushed', desc: 'Assert that a specific job was pushed onto the queue', snippet: "assertPushed('${1:ProcessPodcast}')" }
       ];
       this.addMethods(completions, 'Queue', methods);
     } 
@@ -629,27 +633,30 @@ export class MaximaCompletionProvider implements vscode.CompletionItemProvider {
   private getViewKeys(rootPath: string): string[] {
     const keys: string[] = [];
     const viewsDir = path.join(rootPath, 'src', 'resources', 'views');
-    if (!fs.existsSync(viewsDir)) {
-      return keys;
-    }
+    const emailsDir = path.join(rootPath, 'src', 'resources', 'emails');
 
-    const traverse = (dir: string, currentPrefix = '') => {
+    const traverse = (dir: string, currentPrefix = '', allowedExtensions = ['.edge']) => {
+      if (!fs.existsSync(dir)) return;
       const files = fs.readdirSync(dir);
       for (const file of files) {
         const fullPath = path.join(dir, file);
         const stat = fs.statSync(fullPath);
         if (stat.isDirectory()) {
-          traverse(fullPath, currentPrefix ? `${currentPrefix}.${file}` : file);
-        } else if (file.endsWith('.edge')) {
-          const name = path.basename(file, '.edge');
-          const viewKey = currentPrefix ? `${currentPrefix}.${name}` : name;
-          keys.push(viewKey);
+          traverse(fullPath, currentPrefix ? `${currentPrefix}.${file}` : file, allowedExtensions);
+        } else {
+          const ext = allowedExtensions.find(e => file.endsWith(e));
+          if (ext) {
+            const name = path.basename(file, ext);
+            const viewKey = currentPrefix ? `${currentPrefix}.${name}` : name;
+            keys.push(viewKey);
+          }
         }
       }
     };
 
     try {
-      traverse(viewsDir);
+      traverse(viewsDir, '', ['.edge']);
+      traverse(emailsDir, '', ['.mjml']);
     } catch (e) {
       console.error('Error parsing view files:', e);
     }

@@ -24,6 +24,7 @@ export default {
       poll_interval: 5 // seconds
     },
     redis: {
+      // Powered by BullMQ
       driver: 'redis',
       redis: { url: 'redis://127.0.0.1:6379' }
     }

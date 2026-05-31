@@ -1,6 +1,6 @@
 # Views And Templating
 
-Maxima renders Edge templates from `src/resources/views` and email templates from `src/resources/emails`. Views can be rendered through the `ViewFactory`, response helpers, or global helpers.
+Maxima renders Edge templates from `src/resources/views` and compiles email templates from `src/resources/emails`. Standard views are built on Edge.js, while email templates use `.mjml` layout syntax (with `.edge` fallback) compiled via MJML. Views can be rendered through the `ViewFactory`, response helpers, or global helpers.
 
 ```typescript
 import { view, viewExists, viewFirst } from '@lib/index.js';
@@ -130,12 +130,44 @@ const html = await renderFragment('users.card', 'preview', { name: 'Ada' });
 
 ## Emails
 
-Email templates live under `resources/emails` and are rendered through `renderEmail()` or `ViewFactory.renderEmail()`.
+Email templates live under `resources/emails` (using the `.mjml` extension) and are rendered through `renderEmail()` or `ViewFactory.renderEmail()`. They are compiled using the MJML compiler to produce clean, responsive email HTML.
 
+### Variable Interpolation & Logical Directives
+Email templates fully support variables, conditionals, loops, and other Edge.js features inside the MJML structure. Variables are evaluated during a pre-rendering step before layout compilation.
+
+Example template `resources/emails/welcome.mjml`:
+```xml
+<mjml>
+  <mj-head>
+    <mj-title>Welcome, {{ user.name }}</mj-title>
+  </mj-head>
+  <mj-body background-color="#f6f8fb">
+    <mj-section>
+      <mj-column>
+        <mj-text font-size="20px">Welcome, {{ user.name }}!</mj-text>
+        
+        @if(user.isAdmin)
+          <mj-text color="#0f766e" font-weight="bold">Admin Access Granted.</mj-text>
+        @endif
+
+        <mj-text>Your tasks:</mj-text>
+        @each(task in tasks)
+          <mj-text>- {{ task }}</mj-text>
+        @endeach
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>
+```
+
+Rendering the email:
 ```typescript
 import { renderEmail } from '@lib/index.js';
 
-const html = await renderEmail('welcome', { user: { name: 'Ada' } });
+const html = await renderEmail('welcome', { 
+  user: { name: 'Ada', isAdmin: true },
+  tasks: ['Setup project', 'Configure queue']
+});
 ```
 
 ## View Cache

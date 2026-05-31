@@ -31,7 +31,7 @@ describe('Email System', () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'maxima-mail-'))
     await fs.mkdir(path.join(root, 'resources', 'views'), { recursive: true })
     await fs.mkdir(path.join(root, 'resources', 'emails'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'emails', 'welcome.edge'), '<h1>Welcome {{ user.name }}</h1>')
+    await fs.writeFile(path.join(root, 'resources', 'emails', 'welcome.mjml'), '<mjml><mj-body><mj-section><mj-column><mj-text><h1>Welcome {{ user.name }}</h1></mj-text></mj-column></mj-section></mj-body></mjml>')
     await fs.writeFile(path.join(root, 'terms.pdf'), 'terms')
 
     const app = new Application(root)
@@ -224,7 +224,7 @@ describe('Mail and Notification Parity', () => {
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'maxima-mail-notification-parity-'))
     await fs.mkdir(path.join(root, 'resources', 'emails'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'emails', 'notice.edge'), '# Hello {{ name }}')
+    await fs.writeFile(path.join(root, 'resources', 'emails', 'notice.mjml'), '# Hello {{ name }}')
 
     const app = new Application(root)
     setApplication(app)
@@ -254,6 +254,7 @@ describe('Mail and Notification Parity', () => {
   })
 
   afterEach(async () => {
+    Mail.forgetAlwaysTo()
     Mail.restore()
     Notifications.restore()
     Storage.restore()

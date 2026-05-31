@@ -13,7 +13,7 @@ beforeEach(async () => {
   await fs.mkdir(path.join(root, 'resources', 'views', 'users'), { recursive: true })
   await fs.mkdir(path.join(root, 'resources', 'emails'), { recursive: true })
   await fs.writeFile(path.join(root, 'resources', 'views', 'users', 'show.edge'), '<h1>{{ title }}</h1><p>{{ appName }}</p>')
-  await fs.writeFile(path.join(root, 'resources', 'emails', 'welcome.edge'), '<p>Welcome {{ user.name }}</p>')
+  await fs.writeFile(path.join(root, 'resources', 'emails', 'welcome.mjml'), '<mjml><mj-body><mj-section><mj-column><mj-text><p>Welcome {{ user.name }}</p></mj-text></mj-column></mj-section></mj-body></mjml>')
 
   const app = new Application(root)
   setApplication(app)
@@ -312,7 +312,12 @@ describe('Templating', () => {
     const factory = new ViewFactory(path.join(root, 'resources'), cacheDir)
 
     await expect(factory.render('page')).resolves.toContain('<main>')
-    await fs.writeFile(path.join(root, 'resources', 'views', 'layouts', 'app.edge'), '<section>@yield(\'content\')</section>')
+    const layoutPath = path.join(root, 'resources', 'views', 'layouts', 'app.edge')
+    await fs.writeFile(layoutPath, '<section>@yield(\'content\')</section>')
+
+    // Explicitly update mtime so filesystem timestamp resolution doesn't flake on Windows
+    const stat = await fs.stat(layoutPath)
+    await fs.utimes(layoutPath, new Date(), new Date(stat.mtime.getTime() + 5000))
 
     await expect(factory.render('page')).resolves.toContain('<section>')
   })

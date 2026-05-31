@@ -1,0 +1,32 @@
+<mjml>
+  <mj-head>
+    <mj-title>Welcome to Maxima</mj-title>
+    <mj-font name="Inter" href="https://fonts.googleapis.com/css?family=Inter:300,400,600,800" />
+    <mj-attributes>
+      <mj-all font-family="Inter, Arial, sans-serif" />
+    </mj-attributes>
+  </mj-head>
+  <mj-body background-color="#f6f8fb">
+    <mj-section padding="32px 16px">
+      <mj-column width="100%" background-color="#ffffff" border-radius="8px" border="1px solid #e2e8f0" padding="32px">
+        <mj-image src="{{ env('APP_URL', 'http://127.0.0.1:3000') }}/assets/maxima.png" width="64px" height="64px" align="left" alt="Maxima" />
+        <mj-text color="#0f766e" font-size="13px" font-weight="800" text-transform="uppercase" padding-top="20px">
+          Account ready
+        </mj-text>
+        <mj-text color="#111827" font-size="32px" font-weight="800" line-height="1.2" padding-top="10px">
+          Welcome, {{ user.name }}
+        </mj-text>
+        <mj-text color="#475569" font-size="16px" line-height="1.65" padding-top="18px">
+          Your Maxima account is ready. You can now build with routing, validation, ORM tools, queues, mail, notifications, storage, events, scheduling, and testing helpers.
+        </mj-text>
+        <mj-button href="{{ env('APP_URL', 'http://127.0.0.1:3000') }}" background-color="#0f766e" color="#ffffff" font-size="15px" font-weight="800" align="left" border-radius="8px" padding-top="26px">
+          Open Maxima
+        </mj-button>
+        <mj-divider border-width="1px" border-color="#e2e8f0" padding-top="32px" />
+        <mj-text color="#64748b" font-size="13px" line-height="1.5" padding-top="18px">
+          Laravel-style developer experience on Fastify.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

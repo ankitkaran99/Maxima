@@ -1,4 +1,4 @@
-import BeeQueue from 'bee-queue'
+import { Queue as BullQueue } from 'bullmq'
 import { config } from '@lib/foundation/helpers.js'
 import { Log } from '@lib/logging/LogManager.js'
 import { DB } from '@lib/database/DB.js'
@@ -386,7 +386,7 @@ SerializableRegistry.register(SendQueuedNotificationJob)
 SerializableRegistry.register(CallQueuedClosure)
 
 export class QueueManager {
-  private queues = new Map<string, BeeQueue>()
+  private queues = new Map<string, BullQueue>()
   private pushed: Array<{ queue: string, job: string, options: Record<string, any> }> | null = null
   private failed: Array<{ queue: string, job: string, error: string }> | null = null
   private activePollers = new Set<string>()
@@ -538,11 +538,11 @@ export class QueueManager {
       return this.connectionFactories.get(connConfig.driver)!(connection, connConfig, this).push(job, options, payloadObject)
     }
 
-    const bee = this.queue(queue, connection, connConfig)
-    return bee.createJob(payloadObject)
-      .retries(options.retries ?? 3)
-      .delayUntil(Date.now() + (options.delay ?? 0))
-      .save()
+    const bullQueue = this.queue(queue, connection, connConfig)
+    return bullQueue.add(job.constructor.name, payloadObject, {
+      attempts: (options.retries ?? 3) + 1,
+      delay: options.delay ?? 0
+    })
   }
 
   async work(queue = config<string>('queue.default', 'default'), options: WorkerOptions = {}) {
@@ -627,18 +627,18 @@ export class QueueManager {
     }
   }
 
-  async handle(beeJob: any, connection = config<string>('queue.default', 'default'), options: WorkerOptions = {}, queueName = connection) {
-    const data = await this.decodePayload(beeJob.data)
+  async handle(bullJob: any, connection = config<string>('queue.default', 'default'), options: WorkerOptions = {}, queueName = connection) {
+    const data = await this.decodePayload(bullJob.data)
     const payload = data.payload ?? data.properties
     let job: Job
     try {
       if (typeof payload === 'object' && payload !== null && (payload.__type || payload.class)) {
         job = await deserializeValue(payload)
       } else {
-        job = beeJob.data.payload as Job
+        job = bullJob.data.payload as Job
       }
     } catch (error) {
-      await this.recordFailedJob(connection, queueName, beeJob, error as Error)
+      await this.recordFailedJob(connection, queueName, bullJob, error as Error)
       throw error
     }
 
@@ -649,14 +649,14 @@ export class QueueManager {
         {
           chain: data.chain,
           batchId: data.batchId,
-          jobId: beeJob.id
+          jobId: bullJob.id
         },
         queueName
       )
 
       await this.runWithTimeout(executePromise, options.timeout)
     } catch (error) {
-      await this.recordFailedJob(connection, queueName, { ...beeJob, data }, error as Error)
+      await this.recordFailedJob(connection, queueName, { ...bullJob, data }, error as Error)
       throw error
     }
   }
@@ -743,8 +743,29 @@ export class QueueManager {
 
   private queue(name: string, connection: string, connectionConfig = config('queue.connections.redis', {})) {
     const cacheKey = `${connection}:${name}`
-    if (!this.queues.has(cacheKey)) this.queues.set(cacheKey, new BeeQueue(name, connectionConfig))
+    if (!this.queues.has(cacheKey)) {
+      const connectionOpts = this.getBullMQConnection(connectionConfig)
+      this.queues.set(cacheKey, new BullQueue(name, { connection: connectionOpts }))
+    }
     return this.queues.get(cacheKey)!
+  }
+
+  private getBullMQConnection(connectionConfig: any) {
+    if (!connectionConfig) return {}
+    if (connectionConfig.redis) {
+      const redis = connectionConfig.redis
+      if (typeof redis === 'string') {
+        return redis
+      }
+      if (redis.url) {
+        return redis.url
+      }
+      return redis
+    }
+    if (connectionConfig.url) {
+      return connectionConfig.url
+    }
+    return connectionConfig
   }
 
   private async createPayload(connection: string, queue: string, job: Job, options: Record<string, any>) {
@@ -856,20 +877,20 @@ export class QueueManager {
     }
   }
 
-  private async recordFailedJob(connection: string, queue: string, beeJob: any, error: Error) {
+  private async recordFailedJob(connection: string, queue: string, bullJob: any, error: Error) {
     const exception = error instanceof Error
       ? error
       : (error && typeof error === 'object' && 'message' in error
           ? error as Error
           : new Error(typeof error === 'string' ? error : String(error || 'Unknown error')))
 
-    if (this.failed) this.failed.push({ queue, job: beeJob.data.class ?? beeJob.data.payload?.class, error: exception.message })
+    if (this.failed) this.failed.push({ queue, job: bullJob.data.class ?? bullJob.data.payload?.class, error: exception.message })
     const table = config<string>('queue.failed.table', 'failed_jobs')
     const row = {
       connection,
       queue,
-      job: beeJob.data.class ?? beeJob.data.payload?.class ?? 'Unknown',
-      payload: JSON.stringify(beeJob.data),
+      job: bullJob.data.class ?? bullJob.data.payload?.class ?? 'Unknown',
+      payload: JSON.stringify(bullJob.data),
       exception: exception.stack ?? exception.message,
       error: exception.message,
       failed_at: new Date()

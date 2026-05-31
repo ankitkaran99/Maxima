@@ -2,6 +2,7 @@ import { Queue, WorkerOptions } from './Queue.js'
 import { Log } from '@lib/logging/LogManager.js'
 import fs from 'node:fs'
 import { storagePath } from '@lib/foundation/helpers.js'
+import { Worker as BullWorker } from 'bullmq'
 
 export class QueueWorker {
   private static instances = new Set<QueueWorker>()
@@ -12,6 +13,7 @@ export class QueueWorker {
   private processed = 0
   private startedAt = Date.now()
   private lastRestart = this.restartTimestamp()
+  private workerInstance?: any
 
   constructor(
     public readonly connectionName: string,
@@ -72,21 +74,26 @@ export class QueueWorker {
         Log.info(`Worker stopped for queue: ${this.connectionName}`)
       } else if (connConfig.driver === 'redis') {
         shouldDeregister = false
-        const beeQueue = (Queue as any).queue(queueName, this.connectionName, connConfig)
+        const connectionOpts = (Queue as any).getBullMQConnection(connConfig)
 
-        beeQueue.process(async (beeJob: any) => {
+        const worker = new BullWorker(queueName, async (bullJob: any) => {
           this.checkMemory()
           if (this.shouldQuit) {
             throw new Error('Worker is shutting down')
           }
 
-          await Queue.handle(beeJob, this.connectionName, this.options, queueName)
+          await Queue.handle(bullJob, this.connectionName, this.options, queueName)
           this.processed++
 
           if (this.options.once || this.shouldStop()) {
-            await this.stopRedisWorker(beeQueue)
+            await this.stopRedisWorker()
           }
+        }, {
+          connection: connectionOpts,
+          concurrency: 1
         })
+
+        this.workerInstance = worker
       } else if (connConfig.driver === 'sync') {
         Log.info('Sync driver doesn\'t support worker polling.')
       }
@@ -118,10 +125,10 @@ export class QueueWorker {
     }
   }
 
-  private async stopRedisWorker(beeQueue: any) {
+  private async stopRedisWorker() {
     this.shouldQuit = true
     try {
-      await beeQueue.close?.()
+      await this.workerInstance?.close()
     } finally {
       QueueWorker.instances.delete(this)
     }

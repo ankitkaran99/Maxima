@@ -1,18 +1,3 @@
-MAXIMA REMAINING LARAVEL PARITY GAPS
-Updated: 2026-05-26
-
-Scope: this file intentionally lists only remaining gaps found by comparing
-the current Maxima source tree with Laravel's documented 12.x feature surface.
-Previously completed roadmap items have been removed.
-
-Reference docs checked:
-- https://laravel.com/docs/12.x/documentation
-- https://laravel.com/docs/12.x/routing
-- https://laravel.com/docs/12.x/blade
-- https://laravel.com/docs/12.x/eloquent
-- https://laravel.com/docs/12.x/validation
-- https://laravel.com/docs/12.x/localization
-- https://laravel.com/docs/12.x/queues
-
+switch to bullmq + mjml for mails
 Plugins = Impersonation, Permissions, LiteTable, Maxima-ImExport
 

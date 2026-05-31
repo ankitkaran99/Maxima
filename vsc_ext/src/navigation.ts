@@ -233,10 +233,14 @@ export class MaximaDefinitionProvider implements vscode.DefinitionProvider {
   }
 
   private resolveView(rootPath: string, viewKey: string): vscode.Location | null {
-    const relativePath = viewKey.replace(/\./g, '/') + '.edge';
-    const fullPath = path.join(rootPath, 'src', 'resources', 'views', relativePath);
-    if (fs.existsSync(fullPath)) {
-      return new vscode.Location(vscode.Uri.file(fullPath), new vscode.Position(0, 0));
+    const relativePath = viewKey.replace(/\./g, '/');
+    const viewPath = path.join(rootPath, 'src', 'resources', 'views', relativePath + '.edge');
+    if (fs.existsSync(viewPath)) {
+      return new vscode.Location(vscode.Uri.file(viewPath), new vscode.Position(0, 0));
+    }
+    const emailMjmlPath = path.join(rootPath, 'src', 'resources', 'emails', relativePath + '.mjml');
+    if (fs.existsSync(emailMjmlPath)) {
+      return new vscode.Location(vscode.Uri.file(emailMjmlPath), new vscode.Position(0, 0));
     }
     return null;
   }
