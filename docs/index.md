@@ -56,11 +56,11 @@ This directory contains the framework documentation for Maxima.
 
 ## Plugins & Extension Packages
 
-- [Bouncer (Roles & Permissions)](../plugins/bouncer/README.md): Assign roles, manage abilities, define ownership, and configure gates.
-- [LiteTable (Server-Side DataTables)](../plugins/litetable/README.md): Paginate, filter, search, sort, and export DataTables.
-- [ImEx (Import & Export)](../plugins/imex/README.md): Import spreadsheets to models or collections, and stream or store custom spreadsheet exports.
-- [Impersonation (Act-as Support)](../plugins/impersonation/README.md): Swap authenticated user context securely for admin debugging.
-- [Multi-Tenant (Tenancy Scoping)](../plugins/tenant/README.md): Isolate database connections and storage directories automatically.
+- [Bouncer (Roles & Permissions)](./plugins/bouncer.md): Assign roles, manage abilities, define ownership, and configure gates.
+- [LiteTable (Server-Side DataTables)](./plugins/litetable.md): Paginate, filter, search, sort, and export DataTables.
+- [ImEx (Import & Export)](./plugins/imex.md): Import spreadsheets to models or collections, and stream or store custom spreadsheet exports.
+- [Impersonation (Act-as Support)](./plugins/impersonation.md): Swap authenticated user context securely for admin debugging.
+- [Multi-Tenant (Tenancy Scoping)](./plugins/tenant.md): Isolate database connections and storage directories automatically.
 
 ## Suggested Reading Paths
 

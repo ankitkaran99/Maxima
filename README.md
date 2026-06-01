@@ -28,19 +28,6 @@ npm run maxima -- make:controller UserController
 Start with the documentation index:
 
 - [Documentation Index](./docs/index.md)
-- [Getting Started](./docs/getting-started.md)
-- [Configuration Reference](./docs/configuration-reference.md)
-- [CLI](./docs/cli.md)
-
-## Project Layout
-
-- `src/`: Application code containing `app/` (core logic), `config/`, `database/`, `resources/`, and `routes/`.
-- `public/`: Public static assets served directly.
-- `storage/`: Local application storage (logs, cache, sqlite database, uploaded files).
-- `lib/`: Core framework source code.
-- `tests/`: Vitest test suite.
-- `docs/`: Framework documentation.
-- `.env`: Environment configurations.
 
 ## Performance & Benchmarks
 
