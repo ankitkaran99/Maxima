@@ -152,13 +152,13 @@ describe('Templating', () => {
   })
 
   it('supports localized lang and choice directives with fallback locale', async () => {
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'en'), { recursive: true })
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'fr'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'en'), { recursive: true })
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'fr'), { recursive: true })
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
       fallback: 'Fallback :name',
       apples: '{0} No apples|{1} One apple|[2,*] :count apples'
     }))
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'fr', 'messages.json'), JSON.stringify({
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'fr', 'messages.json'), JSON.stringify({
       welcome: 'Bonjour :name'
     }))
     await fs.writeFile(path.join(root, 'resources', 'views', 'localized.edge'), `

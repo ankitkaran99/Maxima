@@ -43,13 +43,18 @@ npm run test
 
 ## Directory Structure
 
-A standard Maxima project layout aligns with classic MVC architecture:
+Maxima projects align with a classic MVC architecture organized within a nested `src/` layout. Here is what each directory does:
 
-- `.env`: Environment configuration file in the project root.
-- `public/`: Static files served directly by the web server (images, stylesheets, public files).
+- `.env`: Environment configuration file in the project root. Maxima automatically parses this file, dynamically casting boolean/numeric values.
+- `bin/`: Contains wrapper scripts for the framework's command-line interface (CLI). It executes Artisan-like commands via `npm run maxima`.
+- `dist/`: Output folder for compiled JavaScript files generated when building TypeScript files (`npm run build`).
+- `docs/`: Markdown documentation files detailing features, configurations, and guides.
+- `lib/`: The core framework source code (caches, container, database, foundation, http, mailing, etc.).
+- `plugins/`: Folder containing external framework plugins (e.g., `bouncer` for permissions, `imex` for Excel/CSV import/export, `impersonation` for user switching, `litetable` for datatables, `tenant` for multi-tenancy).
+- `public/`: Static files served directly by the Fastify web server (images, stylesheets, public files).
 - `storage/`: Application storage directory containing logs, local disks, database sqlite files, etc.
-- `src/`: The application root.
-  - `app/`: Contains core application logic.
+- `src/`: The application source code root:
+  - `app/`: Contains core application logic:
     - `Casts/`: Custom database attribute casting.
     - `Console/`: Custom CLI commands.
     - `Events/`: Event classes.
@@ -67,9 +72,8 @@ A standard Maxima project layout aligns with classic MVC architecture:
   - `resources/`: Views, localization translations, and raw assets.
   - `routes/`: Web, API, and channels routing files.
   - `server.ts`: The web application entrypoint.
-- `lib/`: The core framework source code (caches, database, http, routing, container, etc.).
 - `tests/`: Vitest integration and unit tests.
-- `bin/`: CLI script wrapper.
+- `vsc_ext/`: Visual Studio Code extension source code for editor autocomplete and support.
 
 ---
 

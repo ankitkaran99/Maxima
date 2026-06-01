@@ -82,7 +82,7 @@ describe('Cache Upgrades (Extras)', () => {
     setApplication(app)
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })
@@ -380,15 +380,22 @@ function redisIsReady(timeoutMs = 3000) {
       clearTimeout(timer)
       client.removeAllListeners()
       try {
-        client.quit()
+        client.disconnect()
       } catch {}
       resolve(ready)
     }
 
-    const client = redis.createClient({ url: redisUrl, retry_strategy: () => undefined })
+    const client = redis.createClient({
+      url: redisUrl,
+      socket: {
+        reconnectStrategy: () => false
+      }
+    })
     client.on('error', () => settle(false, client, timer))
     client.on('end', () => settle(false, client, timer))
-    client.on('ready', () => settle(true, client, timer))
+    client.connect()
+      .then(() => settle(true, client, timer))
+      .catch(() => settle(false, client, timer))
     const timer = setTimeout(() => settle(false, client, timer), timeoutMs)
   })
 }

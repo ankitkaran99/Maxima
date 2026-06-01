@@ -89,7 +89,7 @@ describe('Routing API', () => {
     app.config.set('cors', false)
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })
@@ -1561,7 +1561,7 @@ export class DummyExceptionController extends Controller {
 
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })

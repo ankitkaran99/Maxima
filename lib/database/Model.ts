@@ -854,13 +854,10 @@ function cast(value: any, type?: any, model?: any, key?: string) {
 
 function serialize(value: any, type?: any, model?: any, key?: string) {
   if (value === undefined) return value
+  if (moment.isMoment(value)) return value.toISOString()
+  if (value instanceof Date) return value.toISOString()
   if (type === 'json' || type === 'array' || type === 'object') return typeof value === 'string' ? value : JSON.stringify(value)
   if (type === 'encrypted') return Buffer.from(String(value)).toString('base64')
-  if (type === 'date') {
-    if (moment.isMoment(value)) return value.toISOString()
-    if (value instanceof Date) return value.toISOString()
-    return value
-  }
 
   const CastClass = typeof type === 'function' ? new type() : type
   if (CastClass && typeof CastClass.set === 'function') {

@@ -111,7 +111,7 @@ describe('Notification System', () => {
     setApplication(app)
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })
@@ -237,7 +237,7 @@ describe('Mail and Notification Parity', () => {
     app.config.set('filesystems.disks.local', { driver: 'local', root })
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })

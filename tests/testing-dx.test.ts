@@ -47,7 +47,7 @@ describe('Testing DX Gaps', () => {
     setApplication(app)
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })
@@ -112,12 +112,12 @@ describe('Testing Parity', () => {
 
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'maxima-testing-'))
-    await fs.mkdir(path.join(root, 'resources', 'views'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'views', 'card.edge'), '<h1>{{ title }}</h1>')
+    await fs.mkdir(path.join(root, 'src', 'resources', 'views'), { recursive: true })
+    await fs.writeFile(path.join(root, 'src', 'resources', 'views', 'card.edge'), '<h1>{{ title }}</h1>')
     app = new Application(root)
     setApplication(app)
     app.config.set('database.default', 'sqlite')
-    app.config.set('database.connections.sqlite', { client: 'sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    app.config.set('database.connections.sqlite', { client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     app.config.set('middleware.aliases', {
       block: class {
         handle(_request: any, reply: any) {

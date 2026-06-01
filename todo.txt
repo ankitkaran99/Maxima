@@ -1,2 +1,0 @@
-Plugins = Bouncer, LiteTable, ImEx
-

@@ -411,12 +411,7 @@ class FileCacheStore extends BaseCacheStore {
 
 class RedisCacheStore implements CacheStore {
   private client: any
-  private getAsync: any
-  private setAsync: any
-  private delAsync: any
-  private existsAsync: any
-  private keysAsync: any
-  private connected = false
+  private connectPromise: Promise<void> | null = null
 
   constructor(
     protected readonly name: string,
@@ -424,16 +419,17 @@ class RedisCacheStore implements CacheStore {
     protected readonly options: Record<string, any> = {}
   ) {}
 
-  private connect() {
-    if (this.connected) return
-    const url = this.options.url ?? 'redis://127.0.0.1:6379'
-    this.client = redis.createClient({ url, ...this.options.redis })
-    this.getAsync = promisify(this.client.get).bind(this.client)
-    this.setAsync = promisify(this.client.set).bind(this.client)
-    this.delAsync = promisify(this.client.del).bind(this.client)
-    this.existsAsync = promisify(this.client.exists).bind(this.client)
-    this.keysAsync = promisify(this.client.keys).bind(this.client)
-    this.connected = true
+  private connect(): Promise<void> {
+    if (this.connectPromise) return this.connectPromise
+
+    this.connectPromise = (async () => {
+      const url = this.options.url ?? 'redis://127.0.0.1:6379'
+      this.client = redis.createClient({ url, ...this.options.redis })
+      this.client.on('error', () => {})
+      await this.client.connect()
+    })()
+
+    return this.connectPromise
   }
 
   protected prefix() {
@@ -449,8 +445,8 @@ class RedisCacheStore implements CacheStore {
   }
 
   async get<T = any>(key: string, defaultValue?: T | (() => T | Promise<T>)): Promise<T | undefined> {
-    this.connect()
-    const val = await this.getAsync(this.rawKey(key))
+    await this.connect()
+    const val = await this.client.get(this.rawKey(key))
     if (val === null || val === undefined) {
       Event.dispatch(new CacheMiss(key))
       return resolveDefault(defaultValue)
@@ -466,13 +462,13 @@ class RedisCacheStore implements CacheStore {
   }
 
   async put(key: string, value: any, ttlSeconds?: number): Promise<void> {
-    this.connect()
+    await this.connect()
     const rawVal = JSON.stringify(value)
     const rawKey = this.rawKey(key)
     if (ttlSeconds) {
-      await this.setAsync(rawKey, rawVal, 'EX', ttlSeconds)
+      await this.client.set(rawKey, rawVal, { EX: ttlSeconds })
     } else {
-      await this.setAsync(rawKey, rawVal)
+      await this.client.set(rawKey, rawVal)
     }
     Event.dispatch(new KeyWritten(key, value, ttlSeconds))
   }
@@ -482,25 +478,25 @@ class RedisCacheStore implements CacheStore {
   }
 
   async forget(key: string): Promise<void> {
-    this.connect()
+    await this.connect()
     const rKey = this.rawKey(key)
-    await this.delAsync(rKey)
+    await this.client.del(rKey)
     this.manager.notifyInvalidated({ store: this.name, key: rKey, reason: 'forgot' })
     Event.dispatch(new KeyForgotten(key))
   }
 
   async flush(): Promise<void> {
-    this.connect()
-    const keys = await this.keysAsync(`${this.prefix()}:*`)
+    await this.connect()
+    const keys = await this.client.keys(`${this.prefix()}:*`)
     if (keys && keys.length > 0) {
-      await Promise.all(keys.map((k: string) => this.delAsync(k)))
+      await Promise.all(keys.map((k: string) => this.client.del(k)))
     }
     Event.dispatch(new CacheCleared())
   }
 
   async has(key: string): Promise<boolean> {
-    this.connect()
-    const res = await this.existsAsync(this.rawKey(key))
+    await this.connect()
+    const res = await this.client.exists(this.rawKey(key))
     return res === 1
   }
 
@@ -509,15 +505,15 @@ class RedisCacheStore implements CacheStore {
   }
 
   async add(key: string, value: any, ttlSeconds?: number): Promise<boolean> {
-    this.connect()
+    await this.connect()
     const rawVal = JSON.stringify(value)
     const rawKey = this.rawKey(key)
     try {
       let res: any
       if (ttlSeconds) {
-        res = await this.setAsync(rawKey, rawVal, 'NX', 'EX', ttlSeconds)
+        res = await this.client.set(rawKey, rawVal, { NX: true, EX: ttlSeconds })
       } else {
-        res = await this.setAsync(rawKey, rawVal, 'NX')
+        res = await this.client.set(rawKey, rawVal, { NX: true })
       }
       const succeeded = res === 'OK' || res === 1 || res === '1' || res === true
       if (succeeded) {
@@ -599,31 +595,27 @@ class RedisCacheStore implements CacheStore {
   }
 
   async acquireLock(name: string, seconds: number, owner: string): Promise<boolean> {
-    this.connect()
+    await this.connect()
     const lockKey = this.rawKey(`lock:${name}`)
-    const setNxPx = promisify(this.client.set).bind(this.client)
-    const result = await setNxPx(lockKey, owner, 'NX', 'PX', seconds * 1000)
+    const result = await this.client.set(lockKey, owner, { NX: true, PX: seconds * 1000 })
     return result === 'OK'
   }
 
   async releaseLock(name: string, owner: string): Promise<boolean> {
-    this.connect()
+    await this.connect()
     const lockKey = this.rawKey(`lock:${name}`)
-    const getAsync = promisify(this.client.get).bind(this.client)
-    const delAsync = promisify(this.client.del).bind(this.client)
-    const currentOwner = await getAsync(lockKey)
+    const currentOwner = await this.client.get(lockKey)
     if (currentOwner === owner) {
-      await delAsync(lockKey)
+      await this.client.del(lockKey)
       return true
     }
     return false
   }
 
   async forceReleaseLock(name: string): Promise<void> {
-    this.connect()
+    await this.connect()
     const lockKey = this.rawKey(`lock:${name}`)
-    const delAsync = promisify(this.client.del).bind(this.client)
-    await delAsync(lockKey)
+    await this.client.del(lockKey)
   }
 
   peek(key: string): CacheEntry | undefined { return undefined }

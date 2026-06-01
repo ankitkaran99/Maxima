@@ -244,7 +244,7 @@ describe('Queue System (Fake)', () => {
       default: 'sqlite',
       connections: {
         sqlite: {
-          client: 'sqlite3',
+          client: 'better-sqlite3',
           connection: { filename: ':memory:' },
           useNullAsDefault: true
         }
@@ -366,7 +366,7 @@ describe('Queue System (Real Drivers - DB & Sync)', () => {
     app.config.set('cache.stores.file', { driver: 'memory', prefix: 'test' })
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })

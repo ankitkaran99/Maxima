@@ -51,7 +51,7 @@ export class TenantServiceProvider extends ServiceProvider {
           }
 
           // SQLite filename isolation
-          if (mergedConfig.client === 'sqlite3' || mergedConfig.client === 'sqlite') {
+          if (mergedConfig.client === 'sqlite3' || mergedConfig.client === 'better-sqlite3' || mergedConfig.client === 'sqlite') {
             if (typeof mergedConfig.connection === 'object' && (!tenantDbConfig.connection || !tenantDbConfig.connection.filename)) {
               const dbFile = storagePath('tenants', tenant.id, 'database.sqlite')
               console.log('SQLITE DB FILE:', dbFile)

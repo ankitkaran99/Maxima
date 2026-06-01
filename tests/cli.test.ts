@@ -69,7 +69,7 @@ describe('CLI Extras', () => {
     setApplication(app)
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: ':memory:' },
       useNullAsDefault: true
     })
@@ -524,7 +524,7 @@ async function writeConfig(src: string) {
   await fs.writeFile(path.join(src, 'routes', 'web.ts'), `import { Route } from '@lib/http/Route.js'\n\nRoute.get('/home', 'HomeController@index').name('home')\n`)
   await fs.writeFile(path.join(src, 'config', 'app.ts'), `export default { env: 'testing', key: 'base64:test', url: 'http://localhost', providers: [] }\n`)
   await fs.writeFile(path.join(src, 'config', 'cache.ts'), `export default { default: 'memory', stores: { memory: { driver: 'memory', prefix: 'artisan_test' } } }\n`)
-  await fs.writeFile(path.join(src, 'config', 'database.ts'), `export default { default: 'sqlite', connections: { sqlite: { client: 'sqlite3', connection: { filename: ${JSON.stringify(path.join(src, 'database.sqlite'))} }, useNullAsDefault: true } } }\n`)
+  await fs.writeFile(path.join(src, 'config', 'database.ts'), `export default { default: 'sqlite', connections: { sqlite: { client: 'better-sqlite3', connection: { filename: ${JSON.stringify(path.join(src, 'database.sqlite'))} }, useNullAsDefault: true } } }\n`)
   await fs.writeFile(path.join(src, 'config', 'events.ts'), `export default { discover: false }\n`)
   await fs.writeFile(path.join(src, 'config', 'logging.ts'), `export default { default: 'console', channels: { console: { driver: 'null' } } }\n`)
 }

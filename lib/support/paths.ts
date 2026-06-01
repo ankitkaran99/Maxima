@@ -4,10 +4,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 function applicationRoot() {
   const root = path.resolve(process.env.MAXIMA_BASE_PATH ?? process.cwd())
-  if (!fs.existsSync(path.join(root, 'config')) && fs.existsSync(path.join(root, 'src', 'config'))) {
-    return path.join(root, 'src')
+  if (path.basename(root).toLowerCase() === 'src') {
+    return root
   }
-  return root
+  return path.join(root, 'src')
 }
 
 export function basePath(...segments: string[]) {
@@ -41,15 +41,7 @@ export function projectRoot() {
 }
 
 export function resourcePath(...segments: string[]) {
-  const appRoot = applicationRoot()
-  if (fs.existsSync(path.join(appRoot, 'resources'))) {
-    return path.resolve(appRoot, 'resources', ...segments)
-  }
-  const srcResources = path.resolve(projectRoot(), 'src', 'resources')
-  if (fs.existsSync(srcResources)) {
-    return path.resolve(srcResources, ...segments)
-  }
-  return path.resolve(projectRoot(), 'resources', ...segments)
+  return path.resolve(applicationRoot(), 'resources', ...segments)
 }
 
 export function storagePath(...segments: string[]) {

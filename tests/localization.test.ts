@@ -51,20 +51,20 @@ describe('Localization', () => {
   })
 
   it('loads JSON group files, JS object group files, and root JSON keys with precedence', async () => {
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'en'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'en'), { recursive: true })
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
       welcome: 'Group welcome :name',
       nested: { greeting: 'Hello :Name' }
     }))
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'admin.js'), `
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en', 'admin.js'), `
       export default {
         dashboard: {
           title: 'Admin Dashboard'
         }
       }
     `)
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'types.d.ts'), 'export default { broken: true }\n')
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en.json'), JSON.stringify({
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en', 'types.d.ts'), 'export default { broken: true }\n')
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en.json'), JSON.stringify({
       'messages.welcome': 'Root welcome :name'
     }))
 
@@ -75,8 +75,8 @@ describe('Localization', () => {
   })
 
   it('loads vendor namespace translations', async () => {
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'vendor', 'acme', 'en'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'vendor', 'acme', 'en', 'messages.json'), JSON.stringify({
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'vendor', 'acme', 'en'), { recursive: true })
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'vendor', 'acme', 'en', 'messages.json'), JSON.stringify({
       shipped: 'Package shipped'
     }))
 
@@ -84,8 +84,8 @@ describe('Localization', () => {
   })
 
   it('handles replacement casing and stringable replacements', async () => {
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'en'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'en'), { recursive: true })
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
       receipt: ':Name paid :AMOUNT via :method'
     }))
     stringable(Money, money => `$${money.amount.toFixed(2)}`)
@@ -108,13 +108,13 @@ describe('Localization', () => {
   })
 
   it('scopes locale at runtime and falls back to the configured fallback locale', async () => {
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'en'), { recursive: true })
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'fr'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'en'), { recursive: true })
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'fr'), { recursive: true })
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
       welcome: 'Hello',
       fallback: 'Fallback'
     }))
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'fr', 'messages.json'), JSON.stringify({
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'fr', 'messages.json'), JSON.stringify({
       welcome: 'Bonjour'
     }))
 
@@ -124,8 +124,8 @@ describe('Localization', () => {
   })
 
   it('supports ICU plural rules and pluralizer language selection', async () => {
-    await fs.mkdir(path.join(root, 'resources', 'lang', 'en'), { recursive: true })
-    await fs.writeFile(path.join(root, 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
+    await fs.mkdir(path.join(root, 'src', 'resources', 'lang', 'en'), { recursive: true })
+    await fs.writeFile(path.join(root, 'src', 'resources', 'lang', 'en', 'messages.json'), JSON.stringify({
       files: '{count, plural, =0 {No files} one {One file} other {# files}}'
     }))
 

@@ -32,7 +32,7 @@ describe('Multi-Tenant Plugin', () => {
     // Set configuration for databases
     app.config.set('database.default', 'sqlite')
     app.config.set('database.connections.sqlite', {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename: path.join(tempStorageRoot, 'central.sqlite') },
       useNullAsDefault: true
     })
@@ -76,7 +76,7 @@ describe('Multi-Tenant Plugin', () => {
           subdomain: 'tenant-b',
           domain: 'tenant-b.com',
           database: {
-            client: 'sqlite3',
+            client: 'better-sqlite3',
             connection: { filename: path.join(tempStorageRoot, 'tenant-b-custom.sqlite') }
           },
           storage: {

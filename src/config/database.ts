@@ -5,7 +5,7 @@ export default {
   default: 'sqlite',
   connections: {
     sqlite: {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: {
         filename: (() => {
           const dbFile = env<string | undefined>('DB_FILENAME')

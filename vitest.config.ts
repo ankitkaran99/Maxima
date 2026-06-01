@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vitest/config'
+import { defineConfig, configDefaults } from 'vitest/config'
 
 const resolvePath = (path: string) => fileURLToPath(new URL(path, import.meta.url))
 
@@ -11,5 +11,8 @@ export default defineConfig({
       '@app': resolvePath('./src/app'),
       '@plugins': resolvePath('./plugins')
     }
+  },
+  test: {
+    exclude: [...configDefaults.exclude, 'dist/**']
   }
 })
